@@ -224,6 +224,56 @@ tr.error-row td {
   background: var(--error);
 }
 
+tr.reviewed-row td {
+  background: #eefdf8;
+}
+
+.review-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 220px;
+}
+
+.review-controls select {
+  max-width: 180px;
+}
+
+.manual-review {
+  min-width: 320px;
+}
+
+.review-input {
+  width: 86px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.time-input {
+  width: 105px;
+}
+
+.hours-input {
+  width: 70px;
+}
+
+.mini-button {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.review-badge {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 999px;
+  color: #05603a;
+  background: #d1fadf;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .json-panel {
   max-height: 560px;
   margin: 0;

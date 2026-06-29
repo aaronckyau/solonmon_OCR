@@ -27,6 +27,8 @@ def test_index_renders_upload_page():
     assert response.status_code == 200
     assert "Oil Street 排班解析器" in body
     assert "上傳" in body
+    assert "人工覆核" in body
+    assert "下載修正 JSON" in body
 
 
 def test_parse_without_file_returns_400_json():

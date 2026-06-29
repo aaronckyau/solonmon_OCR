@@ -121,6 +121,7 @@
                 <th>時數</th>
                 <th>解析來源</th>
                 <th>警告</th>
+                <th>人工覆核</th>
               </tr>
             </thead>
             <tbody id="entriesBody"></tbody>
@@ -137,8 +138,9 @@
         <div class="json-header">
           <h2>原始 ParsedSchedule JSON</h2>
           <div class="actions">
+            <button id="resetReviewButton" type="button" class="secondary">重設修正</button>
             <button id="copyJsonButton" type="button" class="secondary">複製 JSON</button>
-            <button id="downloadJsonButton" type="button" class="secondary">下載 JSON</button>
+            <button id="downloadJsonButton" type="button" class="secondary">下載修正 JSON</button>
           </div>
         </div>
         <pre id="rawJson" class="json-panel"></pre>

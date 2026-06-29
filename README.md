@@ -97,6 +97,13 @@ Open:
 http://127.0.0.1:5050
 ```
 
-Upload an `.xlsx` or `.xlsm` Oil Street schedule to inspect the parsed output. The page shows summary counts, staff, date columns, shift rules, schedule entries, warnings, diagnostics, and raw `ParsedSchedule` JSON. It can copy or download the parsed JSON.
+Upload an `.xlsx` or `.xlsm` Oil Street schedule to inspect the parsed output. The page shows summary counts, staff, date columns, shift rules, schedule entries, warnings, diagnostics, and raw `ParsedSchedule` JSON.
+
+The entries table also supports a lightweight review flow:
+
+- choose one option for slash/OR shift codes such as `A/C`
+- manually fill start/end/hours for unresolved shift codes
+- clear the matching warning once a manual correction is applied
+- copy or download the corrected JSON
 
 This tool is only for inspecting parser output. It does not run OCR, export payroll, call AI, connect to the old app, or use any external network service.
