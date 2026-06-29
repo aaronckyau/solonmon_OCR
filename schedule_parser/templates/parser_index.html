@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Oil Street 排班解析器</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='parser_styles.css') }}">
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>Oil Street 排班解析器</h1>
+        <p>本機 Excel 排班解析除錯工具</p>
+      </div>
+      <div id="statusLine" class="status">就緒</div>
+    </header>
+
+    <main class="shell">
+      <section class="panel upload-panel">
+        <div>
+          <label class="file-label" for="scheduleFile">上傳 .xlsx / .xlsm 排班表</label>
+          <input id="scheduleFile" type="file" accept=".xlsx,.xlsm">
+        </div>
+        <div class="actions">
+          <button id="parseButton" type="button">解析</button>
+          <button id="clearButton" type="button" class="secondary">清除</button>
+        </div>
+      </section>
+
+      <section id="summarySection" class="summary-grid"></section>
+
+      <section class="panel" id="messagesSection">
+        <h2>警告 / 錯誤</h2>
+        <div id="messagesList" class="message-list empty">尚未解析排班表。</div>
+      </section>
+
+      <section class="panel">
+        <h2>日期欄位</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>日期</th>
+                <th>欄位</th>
+                <th>欄號</th>
+                <th>原始值</th>
+                <th>公式</th>
+                <th>來源</th>
+              </tr>
+            </thead>
+            <tbody id="dateColumnsBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>員工</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>列號</th>
+                <th>姓名</th>
+                <th>員工編號</th>
+                <th>電話尾四位</th>
+                <th>來源儲存格</th>
+              </tr>
+            </thead>
+            <tbody id="staffBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>班次時間</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>代碼</th>
+                <th>開始</th>
+                <th>結束</th>
+                <th>時數</th>
+                <th>適用範圍</th>
+                <th>來源</th>
+                <th>來源儲存格</th>
+                <th>來源文字</th>
+              </tr>
+            </thead>
+            <tbody id="shiftTimesBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="entries-header">
+          <h2>排班資料</h2>
+          <div id="entryCount" class="muted">0 筆</div>
+        </div>
+        <div class="filters">
+          <input id="entrySearch" type="search" placeholder="搜尋排班資料">
+          <select id="staffFilter">
+            <option value="">全部員工</option>
+          </select>
+          <label><input id="unresolvedOnly" type="checkbox"> 只看未解析</label>
+          <label><input id="warningsOnly" type="checkbox"> 只看有警告</label>
+        </div>
+        <div class="table-wrap entries-table">
+          <table>
+            <thead>
+              <tr>
+                <th>日期</th>
+                <th>員工姓名</th>
+                <th>儲存格</th>
+                <th>原始值</th>
+                <th>原始班次代碼</th>
+                <th>班次代碼</th>
+                <th>班次選項</th>
+                <th>預定上班</th>
+                <th>預定下班</th>
+                <th>時數</th>
+                <th>解析來源</th>
+                <th>警告</th>
+              </tr>
+            </thead>
+            <tbody id="entriesBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <details class="panel">
+        <summary>診斷資訊</summary>
+        <pre id="diagnosticsJson" class="json-panel"></pre>
+      </details>
+
+      <section class="panel">
+        <div class="json-header">
+          <h2>原始 ParsedSchedule JSON</h2>
+          <div class="actions">
+            <button id="copyJsonButton" type="button" class="secondary">複製 JSON</button>
+            <button id="downloadJsonButton" type="button" class="secondary">下載 JSON</button>
+          </div>
+        </div>
+        <pre id="rawJson" class="json-panel"></pre>
+      </section>
+    </main>
+
+    <script src="{{ url_for('static', filename='parser_app.js') }}"></script>
+  </body>
+</html>
