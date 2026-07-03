@@ -336,7 +336,7 @@ def test_d_and_g_logsheet_review_is_one_sheet_at_a_time():
     assert "<th>Schedule</th>" in body
     assert "<th>Status</th>" in body
     assert "使用 OpenRouter Qwen3.6 35B A3B 辨識 D&G" not in script
-    assert "OCR 未處理工作紀錄（最多 5 張同步）" in script
+    assert "OCR 下一批 5 張工作紀錄" in script
     assert "function isDAndGProfile" in script
     assert "function renderDngSheetReview" in script
     assert "function renderDngStaffSelect" in script
@@ -371,9 +371,12 @@ def test_d_and_g_logsheet_review_is_one_sheet_at_a_time():
     assert "function dngPendingOcrFiles" in script
     assert "function ocrPendingDngSheets" in script
     assert "function ocrDngSheetFile" in script
-    assert "Math.min(5, queue.length)" in script
-    assert "Promise.all(Array.from({ length: workerCount }, () => runWorker()))" in script
-    assert "OCR 完成 ${completed}/${total} 張" in script
+    assert "pendingFiles.slice(0, 5)" in script
+    assert "async function runNextSheet()" in script
+    assert "await runNextSheet()" in script
+    assert "Promise.all(Array.from({ length: workerCount }, () => runWorker()))" not in script
+    assert "最多 5 張同步" not in script
+    assert "OCR 下一批完成 ${completed}/${total} 張" in script
     assert "已保存 ${savedSheets}/${totalSheets} 張，已採用 ${rows.length} 筆" in script
     assert "function ocrCurrentDngSheet" in script
     assert "function saveDngCurrentSheet" in script
@@ -386,7 +389,7 @@ def test_d_and_g_logsheet_review_is_one_sheet_at_a_time():
     assert "dngImageView" in script
     assert "ocrPendingDngSheets()" in script
     assert "state.ocr.daily_rows = [...remainingRows, ...rows]" in script
-    assert "OCR 未處理（最多 5 張同步）" in body
+    assert "OCR 下一批 5 張" in body
     assert ".dng-sheet-workspace" in styles
     assert ".dng-sheet-file.is-active" in styles
     assert ".workbench-step.ocr-panel" in styles

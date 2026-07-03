@@ -141,7 +141,7 @@ const PROJECT_PROFILES = {
     ocrIntro: "批次 OCR D&G 工作紀錄；完成的 sheet 可先審核及 Save，員工排班彙總會在 Save 後更新。",
     logUploadLabel: "上傳 D&G 工作紀錄圖片 / PDF",
     ocrPromptPlaceholder: "可選：補充月份年份，例如 April 2026；或說明相片內日期範圍。",
-    ocrButtonLabel: "OCR 未處理工作紀錄（最多 5 張同步）",
+    ocrButtonLabel: "OCR 下一批 5 張工作紀錄",
     compareTitle: "排班 vs D&G 工作紀錄核對",
     sourceSidebarAriaLabel: "D&G 工作紀錄來源文件",
     assignmentEmptyText: "上傳 D&G 工作紀錄後，可在這裡把檔案指派到正確員工。",
@@ -1797,20 +1797,21 @@ async function ocrPendingDngSheets() {
 
   ensureDngOcrAggregate();
   state.dngBatchBusy = true;
-  const total = pendingFiles.length;
+  const batchFiles = pendingFiles.slice(0, 5);
+  const remainingAfterBatch = Math.max(0, pendingFiles.length - batchFiles.length);
+  const total = batchFiles.length;
   let completed = 0;
   let failed = 0;
   let ready = 0;
-  const queue = pendingFiles.map((file) => logsheetFileKey(file.name));
-  const workerCount = Math.min(5, queue.length);
+  const queue = batchFiles.map((file) => logsheetFileKey(file.name));
   showOcrProgress(total);
   setOcrProgress(0, total, `D&G OCR 0 / ${total}`);
-  if (els.ocrMeta) els.ocrMeta.textContent = `OCR 中：0/${total} 張；完成後可逐張審核及 Save`;
-  setStatus(`開始 D&G 批次 OCR：${total} 張，最多 ${workerCount} 張同步。`);
+  if (els.ocrMeta) els.ocrMeta.textContent = `OCR 下一批：0/${total} 張；尚有 ${remainingAfterBatch} 張排在後面`;
+  setStatus(`開始 D&G OCR 下一批 ${total} 張；完成後再按一次會掃下一批。`);
   renderDngSheetReview();
   updateWorkflowState();
 
-  async function runWorker() {
+  async function runNextSheet() {
     while (queue.length) {
       const fileKey = queue.shift();
       const fileRecord = logsheetFileByKey(fileKey);
@@ -1828,7 +1829,7 @@ async function ocrPendingDngSheets() {
       } finally {
         completed += 1;
         setOcrProgress(completed, total, `D&G OCR ${completed} / ${total}`);
-        if (els.ocrMeta) els.ocrMeta.textContent = `OCR 完成 ${completed}/${total} 張；已保存 ${(state.logsheetFiles || []).filter((file) => file.reviewSaved).length} 張`;
+        if (els.ocrMeta) els.ocrMeta.textContent = `OCR 下一批完成 ${completed}/${total} 張；尚有 ${remainingAfterBatch} 張未掃`;
         renderDngSheetReview();
         updateWorkflowState();
       }
@@ -1836,9 +1837,10 @@ async function ocrPendingDngSheets() {
   }
 
   try {
-    await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+    await runNextSheet();
     const failedText = failed ? `，${failed} 張失敗` : "";
-    setStatus(`D&G 批次 OCR 完成：${ready} 張可審核${failedText}。Save 後會更新員工排班彙總。`, Boolean(failed));
+    const remainingText = remainingAfterBatch ? `；仍有 ${remainingAfterBatch} 張未掃，可再按「OCR 下一批 5 張」` : "";
+    setStatus(`D&G 下一批 OCR 完成：${ready} 張可審核${failedText}${remainingText}。Save 後會更新員工排班彙總。`, Boolean(failed));
   } finally {
     state.dngBatchBusy = false;
     renderDngSheetReview();
