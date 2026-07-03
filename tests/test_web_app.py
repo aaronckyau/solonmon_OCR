@@ -83,6 +83,9 @@ def test_index_renders_upload_page():
     assert "影像增強" in body
     assert "OCR 表格" in body
     assert "ocrProgress" in body
+    assert "dngSheetReviewPanel" in body
+    assert "dngOcrCurrentButton" in body
+    assert "dngSaveSheetButton" in body
     assert "排班 vs 打卡紙核對" in body
     assert "lateGraceMinutesInput" in body
     assert "earlyLeaveGraceMinutesInput" in body
@@ -313,6 +316,30 @@ def test_public_holiday_years_are_selectable_and_data_backed():
     assert "function currentOfficialHolidayYear" in script
     assert "function inferScheduleHolidayYear" in script
     assert "function shouldInferSelectedHolidayLine" in script
+
+
+def test_d_and_g_logsheet_review_is_one_sheet_at_a_time():
+    root = Path(__file__).parents[1]
+    body = (root / "schedule_parser" / "templates" / "parser_index.html").read_text(encoding="utf-8")
+    script = (root / "schedule_parser" / "static" / "parser_app.js").read_text(encoding="utf-8")
+    styles = (root / "schedule_parser" / "static" / "parser_styles.css").read_text(encoding="utf-8")
+
+    assert "逐張工作紀錄" in body
+    assert "dngSheetFileList" in body
+    assert "dngSheetPreviewImage" in body
+    assert "dngSheetRows" in body
+    assert "OCR 目前工作紀錄" in script
+    assert "function isDAndGProfile" in script
+    assert "function renderDngSheetReview" in script
+    assert "function ocrCurrentDngSheet" in script
+    assert "function saveDngCurrentSheet" in script
+    assert "replaceDngOcrRowsForFile" in script
+    assert "activeLogsheetFileKey" in script
+    assert "dngDraftRowsByFileKey" in script
+    assert "await ocrCurrentDngSheet()" in script
+    assert "state.ocr.daily_rows = mergeOcrDailyRows([...remainingRows, ...rows])" in script
+    assert ".dng-sheet-workspace" in styles
+    assert ".dng-sheet-file.is-active" in styles
 
 
 def test_parse_without_file_returns_400_json():

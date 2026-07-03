@@ -245,6 +245,63 @@
           <progress id="ocrProgressBar" value="0" max="1"></progress>
           <div id="ocrProgressList" class="ocr-progress-list"></div>
         </div>
+        <section id="dngSheetReviewPanel" class="dng-sheet-review" hidden>
+          <div class="dng-sheet-toolbar">
+            <div>
+              <p class="eyebrow">D&G Review</p>
+              <h3>逐張工作紀錄</h3>
+            </div>
+            <div class="dng-sheet-actions">
+              <button id="dngPrevSheetButton" type="button" class="secondary">上一張</button>
+              <span id="dngSheetStatus" class="dng-sheet-status">0 / 0</span>
+              <button id="dngNextSheetButton" type="button" class="secondary">下一張</button>
+              <button id="dngOcrCurrentButton" type="button">OCR 目前這張</button>
+              <button id="dngSaveSheetButton" type="button">Save</button>
+            </div>
+          </div>
+          <div class="dng-sheet-workspace">
+            <aside class="dng-sheet-files" aria-label="D&G 已上傳工作紀錄">
+              <div class="dng-sheet-files-head">
+                <strong>來源文件</strong>
+                <small id="dngSheetFileCount">0 sheets</small>
+              </div>
+              <div id="dngSheetFileList" class="dng-sheet-file-list"></div>
+            </aside>
+            <section class="dng-sheet-preview-card">
+              <div class="dng-sheet-preview-head">
+                <strong id="dngSheetPreviewTitle">未選擇</strong>
+                <small id="dngSheetPreviewMeta">上傳後選擇一張</small>
+              </div>
+              <div id="dngSheetPreviewStage" class="dng-sheet-preview-stage">
+                <img id="dngSheetPreviewImage" alt="D&G 工作紀錄預覽" hidden>
+                <div id="dngSheetPreviewEmpty" class="logsheet-empty">選擇一張圖片後會在這裡預覽。</div>
+              </div>
+            </section>
+            <section class="dng-sheet-table-card">
+              <div class="dng-sheet-table-head">
+                <div>
+                  <strong>目前這張 OCR Rows</strong>
+                  <small id="dngSheetRowsSummary">0 rows</small>
+                </div>
+                <button id="dngAddRowButton" type="button" class="secondary">新增列</button>
+              </div>
+              <div class="table-wrap dng-sheet-table-wrap">
+                <table class="dng-sheet-table">
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Name</th>
+                      <th>In</th>
+                      <th>Out</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody id="dngSheetRows"></tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+        </section>
         <div id="ocrTableSection" class="ocr-table-section" hidden>
           <div class="entries-header">
             <h3>OCR 表格</h3>

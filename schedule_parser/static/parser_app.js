@@ -141,7 +141,7 @@ const PROJECT_PROFILES = {
     ocrIntro: "使用 OpenRouter Qwen3.6 35B A3B 辨識 D&G 促銷員工作紀錄相片，支援一張相片內有多張表格。",
     logUploadLabel: "上傳 D&G 工作紀錄圖片 / PDF",
     ocrPromptPlaceholder: "可選：補充月份年份，例如 April 2026；或說明相片內日期範圍。",
-    ocrButtonLabel: "OCR 工作紀錄",
+    ocrButtonLabel: "OCR 目前工作紀錄",
     compareTitle: "排班 vs D&G 工作紀錄核對",
     sourceSidebarAriaLabel: "D&G 工作紀錄來源文件",
     assignmentEmptyText: "上傳 D&G 工作紀錄後，可在這裡把檔案指派到正確員工。",
@@ -182,6 +182,10 @@ const state = {
   scheduleConfirmed: false,
   selectedRosterStaff: "",
   logsheetFiles: [],
+  activeLogsheetFileKey: "",
+  dngSheetRows: [],
+  dngDraftRowsByFileKey: {},
+  dngSheetBusy: false,
   rosterImageView: { x: 0, y: 0, scale: 1 },
   rosterImageDrag: null,
   rosterImageFileName: "",
@@ -236,6 +240,22 @@ const els = {
   compareOutput: document.getElementById("compareOutput"),
   logsheetAssignmentSummary: document.getElementById("logsheetAssignmentSummary"),
   logsheetAssignmentList: document.getElementById("logsheetAssignmentList"),
+  dngSheetReviewPanel: document.getElementById("dngSheetReviewPanel"),
+  dngSheetFileCount: document.getElementById("dngSheetFileCount"),
+  dngSheetFileList: document.getElementById("dngSheetFileList"),
+  dngSheetStatus: document.getElementById("dngSheetStatus"),
+  dngPrevSheet: document.getElementById("dngPrevSheetButton"),
+  dngNextSheet: document.getElementById("dngNextSheetButton"),
+  dngOcrCurrent: document.getElementById("dngOcrCurrentButton"),
+  dngSaveSheet: document.getElementById("dngSaveSheetButton"),
+  dngAddRow: document.getElementById("dngAddRowButton"),
+  dngSheetRows: document.getElementById("dngSheetRows"),
+  dngSheetRowsSummary: document.getElementById("dngSheetRowsSummary"),
+  dngSheetPreviewTitle: document.getElementById("dngSheetPreviewTitle"),
+  dngSheetPreviewMeta: document.getElementById("dngSheetPreviewMeta"),
+  dngSheetPreviewStage: document.getElementById("dngSheetPreviewStage"),
+  dngSheetPreviewImage: document.getElementById("dngSheetPreviewImage"),
+  dngSheetPreviewEmpty: document.getElementById("dngSheetPreviewEmpty"),
   summary: document.getElementById("summarySection"),
   messagesSection: document.getElementById("messagesSection"),
   messages: document.getElementById("messagesList"),
@@ -336,6 +356,15 @@ els.downloadOcr?.addEventListener("click", downloadOcrJson);
 els.compareButton.addEventListener("click", () => refreshRosterComparison({ userAction: true }));
 els.logsheetAssignmentList?.addEventListener("change", handleLogsheetAssignmentChange);
 els.logsheetAssignmentList?.addEventListener("click", handleLogsheetPreviewClick);
+els.dngSheetFileList?.addEventListener("click", handleDngSheetFileClick);
+els.dngPrevSheet?.addEventListener("click", () => shiftDngSheet(-1));
+els.dngNextSheet?.addEventListener("click", () => shiftDngSheet(1));
+els.dngOcrCurrent?.addEventListener("click", ocrCurrentDngSheet);
+els.dngSaveSheet?.addEventListener("click", saveDngCurrentSheet);
+els.dngAddRow?.addEventListener("click", addDngSheetRow);
+els.dngSheetRows?.addEventListener("input", handleDngSheetRowsInput);
+els.dngSheetRows?.addEventListener("change", handleDngSheetRowsChange);
+els.dngSheetRows?.addEventListener("click", handleDngSheetRowsClick);
 els.lateGraceMinutes?.addEventListener("change", handleGraceMinutesChange);
 els.earlyLeaveGraceMinutes?.addEventListener("change", handleGraceMinutesChange);
 els.countEarlyIn?.addEventListener("change", handleGraceMinutesChange);
@@ -369,6 +398,7 @@ els.rosterDetailImageStage?.addEventListener("dblclick", resetRosterImageView);
 applyProjectProfileCopy();
 renderHolidayStatus();
 renderLogsheetAssignments();
+renderDngSheetReview();
 updateWorkflowState();
 
 function apiUrl(path) {
@@ -404,11 +434,16 @@ function currentProjectProfile() {
   return PROJECT_PROFILES[state.projectProfile] || PROJECT_PROFILES[DEFAULT_PROJECT_PROFILE];
 }
 
+function isDAndGProfile() {
+  return state.projectProfile === "d_and_g";
+}
+
 function selectProjectProfile(profileId) {
   const nextProfileId = PROJECT_PROFILES[profileId] ? profileId : DEFAULT_PROJECT_PROFILE;
   state.projectProfile = nextProfileId;
   applyProjectProfileCopy();
   renderLogsheetAssignments();
+  renderDngSheetReview();
   updateWorkflowState();
   setWorkflowStep("schedule-upload");
   setStatus(`${currentProjectProfile().name} 已選擇。`);
@@ -589,6 +624,10 @@ async function ocrSelectedLogsheet() {
     return;
   }
   rememberLogsheetFiles(files);
+  if (isDAndGProfile()) {
+    await ocrCurrentDngSheet();
+    return;
+  }
   const extraPrompt = els.ocrPrompt.value.trim();
   state.ocr = createOcrAggregate(files);
   renderOcrResult();
@@ -764,6 +803,7 @@ function handleLogsheetFileSelectionChange() {
   const files = Array.from(els.logsheetFile?.files || []);
   rememberLogsheetFiles(files);
   renderLogsheetAssignments();
+  renderDngSheetReview();
 }
 
 async function ocrSingleFile(file, extraPrompt) {
@@ -787,16 +827,29 @@ async function ocrSingleFile(file, extraPrompt) {
 }
 
 function rememberLogsheetFiles(files) {
-  const previousAssignments = new Map((state.logsheetFiles || [])
-    .map((file) => [logsheetFileKey(file.name), file.assignedStaff || ""]));
+  const previousFiles = new Map((state.logsheetFiles || [])
+    .map((file) => [logsheetFileKey(file.name), file]));
   revokeLogsheetFileUrls();
   state.logsheetFiles = files.map((file) => ({
     name: file.name,
     type: file.type || "",
-    assignedStaff: previousAssignments.get(logsheetFileKey(file.name)) || "",
+    assignedStaff: previousFiles.get(logsheetFileKey(file.name))?.assignedStaff || "",
+    ocrStatus: previousFiles.get(logsheetFileKey(file.name))?.ocrStatus || "Uploaded",
+    ocrRows: previousFiles.get(logsheetFileKey(file.name))?.ocrRows || 0,
+    reviewSaved: Boolean(previousFiles.get(logsheetFileKey(file.name))?.reviewSaved),
+    ocrError: previousFiles.get(logsheetFileKey(file.name))?.ocrError || "",
+    ocrResult: previousFiles.get(logsheetFileKey(file.name))?.ocrResult || null,
     previewUrl: isPreviewableLogsheetImage(file) ? URL.createObjectURL(file) : "",
   }));
+  if (isDAndGProfile()) {
+    syncDngOcrAggregateForFiles(files);
+    if (!logsheetFileByKey(state.activeLogsheetFileKey)) {
+      state.activeLogsheetFileKey = state.logsheetFiles[0] ? logsheetFileKey(state.logsheetFiles[0].name) : "";
+    }
+    state.dngSheetRows = loadDngDraftRows(state.activeLogsheetFileKey);
+  }
   renderLogsheetAssignments();
+  renderDngSheetReview();
 }
 
 function isPreviewableLogsheetImage(file) {
@@ -849,6 +902,482 @@ function renderLogsheetAssignments() {
   }).join("");
 }
 
+function renderDngSheetReview() {
+  if (!els.dngSheetReviewPanel) return;
+  const enabled = isDAndGProfile();
+  els.dngSheetReviewPanel.hidden = !enabled;
+  if (!enabled) return;
+
+  const files = state.logsheetFiles || [];
+  if (els.dngSheetFileCount) {
+    const savedCount = files.filter((file) => file.reviewSaved).length;
+    els.dngSheetFileCount.textContent = `${files.length} sheets${files.length ? ` / ${savedCount} saved` : ""}`;
+  }
+  if (!files.length) {
+    state.activeLogsheetFileKey = "";
+    state.dngSheetRows = [];
+  } else if (!logsheetFileByKey(state.activeLogsheetFileKey)) {
+    state.activeLogsheetFileKey = logsheetFileKey(files[0].name);
+    state.dngSheetRows = loadDngDraftRows(state.activeLogsheetFileKey);
+  }
+
+  const activeFile = activeDngLogsheetFile();
+  const activeIndex = activeFile ? files.findIndex((file) => logsheetFileKey(file.name) === state.activeLogsheetFileKey) : -1;
+  const currentLabel = activeIndex >= 0 ? `${activeIndex + 1} / ${files.length}` : "0 / 0";
+  if (els.dngSheetStatus) els.dngSheetStatus.textContent = currentLabel;
+  if (els.dngPrevSheet) els.dngPrevSheet.disabled = state.dngSheetBusy || activeIndex <= 0;
+  if (els.dngNextSheet) els.dngNextSheet.disabled = state.dngSheetBusy || activeIndex < 0 || activeIndex >= files.length - 1;
+  if (els.dngOcrCurrent) els.dngOcrCurrent.disabled = state.dngSheetBusy || !activeFile;
+  if (els.dngSaveSheet) els.dngSaveSheet.disabled = state.dngSheetBusy || !activeFile;
+  if (els.dngAddRow) els.dngAddRow.disabled = state.dngSheetBusy || !activeFile;
+
+  renderDngSheetFileList(files);
+  renderDngSheetPreview(activeFile);
+  renderDngSheetRows();
+}
+
+function renderDngSheetFileList(files) {
+  if (!els.dngSheetFileList) return;
+  if (!files.length) {
+    els.dngSheetFileList.innerHTML = '<div class="logsheet-empty">上傳 D&G 工作紀錄後會逐張列在這裡。</div>';
+    return;
+  }
+  els.dngSheetFileList.innerHTML = files.map((file, index) => {
+    const key = logsheetFileKey(file.name);
+    const active = key === state.activeLogsheetFileKey;
+    const rowCount = Number(file.ocrRows || ocrRowsForFileKey(key).length || 0);
+    const status = dngSheetStatusLabel(file, rowCount);
+    return `
+      <button type="button" class="dng-sheet-file${active ? " is-active" : ""}${file.reviewSaved ? " is-saved" : ""}" data-dng-sheet-key="${escapeAttr(key)}">
+        <span class="dng-sheet-file-index">${index + 1}</span>
+        <span class="dng-sheet-file-main">
+          <strong>${escapeHtml(file.name)}</strong>
+          <small>${escapeHtml(status)} · ${rowCount} rows</small>
+        </span>
+      </button>
+    `;
+  }).join("");
+}
+
+function renderDngSheetPreview(file) {
+  if (els.dngSheetPreviewTitle) els.dngSheetPreviewTitle.textContent = file?.name || "未選擇";
+  if (els.dngSheetPreviewMeta) {
+    const meta = file ? `${dngSheetStatusLabel(file, Number(file.ocrRows || 0))} · ${file.previewUrl ? "圖片預覽" : "沒有圖片預覽"}` : "上傳後選擇一張";
+    els.dngSheetPreviewMeta.textContent = meta;
+  }
+  if (!els.dngSheetPreviewImage || !els.dngSheetPreviewEmpty) return;
+  if (file?.previewUrl) {
+    els.dngSheetPreviewImage.src = file.previewUrl;
+    els.dngSheetPreviewImage.hidden = false;
+    els.dngSheetPreviewEmpty.hidden = true;
+  } else {
+    els.dngSheetPreviewImage.removeAttribute("src");
+    els.dngSheetPreviewImage.hidden = true;
+    els.dngSheetPreviewEmpty.hidden = false;
+    els.dngSheetPreviewEmpty.textContent = file ? "這個檔案沒有可直接預覽的圖片，仍可 OCR 或 Save rows。" : "選擇一張圖片後會在這裡預覽。";
+  }
+}
+
+function renderDngSheetRows() {
+  if (!els.dngSheetRows) return;
+  const rows = state.dngSheetRows || [];
+  if (els.dngSheetRowsSummary) {
+    const activeFile = activeDngLogsheetFile();
+    const savedText = activeFile?.reviewSaved ? " · saved" : "";
+    els.dngSheetRowsSummary.textContent = `${rows.length} rows${savedText}`;
+  }
+  if (!activeDngLogsheetFile()) {
+    els.dngSheetRows.innerHTML = '<tr><td colspan="5" class="muted">請先上傳並選擇一張 D&G 工作紀錄。</td></tr>';
+    return;
+  }
+  if (!rows.length) {
+    els.dngSheetRows.innerHTML = '<tr><td colspan="5" class="muted">先按 OCR 目前這張，或按新增列手動輸入。</td></tr>';
+    return;
+  }
+  els.dngSheetRows.innerHTML = rows.map((row, index) => `
+    <tr data-dng-row="${index}">
+      <td><input value="${escapeAttr(row.date || "")}" data-dng-row="${index}" data-dng-field="date" placeholder="2026-04-01"></td>
+      <td><input value="${escapeAttr(row.name || "")}" data-dng-row="${index}" data-dng-field="name" placeholder="Staff name"></td>
+      <td><input value="${escapeAttr(row.in || "")}" data-dng-row="${index}" data-dng-field="in" placeholder="09:00"></td>
+      <td><input value="${escapeAttr(row.out || "")}" data-dng-row="${index}" data-dng-field="out" placeholder="21:30"></td>
+      <td><button type="button" class="ghost danger" data-dng-delete-row="${index}" aria-label="刪除第 ${index + 1} 列">刪除</button></td>
+    </tr>
+  `).join("");
+}
+
+function dngSheetStatusLabel(file, rowCount = 0) {
+  if (!file) return "未選擇";
+  if (file.reviewSaved) return "Saved";
+  if (file.ocrError) return "Failed";
+  if (file.ocrStatus === "OCR") return "OCR";
+  if (file.ocrStatus === "Ready") return "Ready";
+  if (file.ocrStatus === "No data") return "No data";
+  if (rowCount) return "Ready";
+  return file.ocrStatus || "Uploaded";
+}
+
+function handleDngSheetFileClick(event) {
+  const button = event.target.closest("[data-dng-sheet-key]");
+  if (!button) return;
+  selectDngLogsheetFile(button.dataset.dngSheetKey || "");
+}
+
+function shiftDngSheet(direction) {
+  const files = state.logsheetFiles || [];
+  const currentIndex = files.findIndex((file) => logsheetFileKey(file.name) === state.activeLogsheetFileKey);
+  const next = files[currentIndex + direction];
+  if (next) selectDngLogsheetFile(logsheetFileKey(next.name));
+}
+
+function selectDngLogsheetFile(fileKey) {
+  if (!logsheetFileByKey(fileKey)) return;
+  storeActiveDngDraftRows();
+  state.activeLogsheetFileKey = fileKey;
+  state.dngSheetRows = loadDngDraftRows(fileKey);
+  renderDngSheetReview();
+}
+
+function activeDngLogsheetFile() {
+  return logsheetFileByKey(state.activeLogsheetFileKey);
+}
+
+function loadDngDraftRows(fileKey) {
+  if (!fileKey) return [];
+  const draftRows = state.dngDraftRowsByFileKey[fileKey];
+  if (Array.isArray(draftRows)) return draftRows.map((row) => ({ ...row }));
+  return ocrRowsForFileKey(fileKey).map((row) => dngEditableRowFromOcrRow(row));
+}
+
+function storeActiveDngDraftRows() {
+  if (!isDAndGProfile() || !state.activeLogsheetFileKey) return;
+  state.dngDraftRowsByFileKey[state.activeLogsheetFileKey] = dngSheetRowsFromDom();
+}
+
+function dngSheetRowsFromDom() {
+  if (!els.dngSheetRows) return state.dngSheetRows || [];
+  const tableRows = [...els.dngSheetRows.querySelectorAll("tr[data-dng-row]")];
+  if (!tableRows.length) return state.dngSheetRows || [];
+  return tableRows.map((tableRow) => {
+    const row = {};
+    ["date", "name", "in", "out"].forEach((field) => {
+      row[field] = tableRow.querySelector(`[data-dng-field="${field}"]`)?.value.trim() || "";
+    });
+    return dngEditableRowFromOcrRow(row);
+  });
+}
+
+function handleDngSheetRowsInput(event) {
+  const input = event.target.closest("[data-dng-field]");
+  if (!input) return;
+  const rowIndex = Number(input.dataset.dngRow);
+  const field = input.dataset.dngField;
+  if (!state.dngSheetRows[rowIndex] || !field) return;
+  state.dngSheetRows[rowIndex][field] = input.value;
+  state.dngDraftRowsByFileKey[state.activeLogsheetFileKey] = state.dngSheetRows.map((row) => ({ ...row }));
+}
+
+function handleDngSheetRowsChange(event) {
+  const input = event.target.closest("[data-dng-field]");
+  if (!input) return;
+  if (input.dataset.dngField === "in" || input.dataset.dngField === "out") {
+    const normalized = normalizeManualActualTime(input.value);
+    if (normalized !== null) input.value = normalized;
+  }
+  state.dngSheetRows = dngSheetRowsFromDom();
+  state.dngDraftRowsByFileKey[state.activeLogsheetFileKey] = state.dngSheetRows.map((row) => ({ ...row }));
+}
+
+function handleDngSheetRowsClick(event) {
+  const button = event.target.closest("[data-dng-delete-row]");
+  if (!button) return;
+  const index = Number(button.dataset.dngDeleteRow);
+  if (!Number.isInteger(index)) return;
+  state.dngSheetRows = dngSheetRowsFromDom().filter((_, rowIndex) => rowIndex !== index);
+  state.dngDraftRowsByFileKey[state.activeLogsheetFileKey] = state.dngSheetRows.map((row) => ({ ...row }));
+  renderDngSheetRows();
+}
+
+function addDngSheetRow() {
+  const file = activeDngLogsheetFile();
+  if (!file) {
+    setStatus("請先選擇一張 D&G 工作紀錄。", true);
+    return;
+  }
+  state.dngSheetRows = dngSheetRowsFromDom();
+  state.dngSheetRows.push(createDngBlankSheetRow(file.name));
+  state.dngDraftRowsByFileKey[state.activeLogsheetFileKey] = state.dngSheetRows.map((row) => ({ ...row }));
+  renderDngSheetRows();
+}
+
+async function ocrCurrentDngSheet() {
+  if (!state.schedule || !state.scheduleConfirmed) {
+    setStatus("請先讀取並確認排班表，再 OCR 工作紀錄。", true);
+    setWorkflowStep(state.schedule ? "check-schedule" : "schedule-upload");
+    return;
+  }
+  const fileRecord = activeDngLogsheetFile();
+  if (!fileRecord) {
+    setStatus(currentProjectProfile().noFileMessage, true);
+    return;
+  }
+  const file = logsheetInputFileByKey(state.activeLogsheetFileKey);
+  if (!file) {
+    setStatus("找不到目前這張工作紀錄的原始檔，請重新選擇檔案。", true);
+    return;
+  }
+
+  ensureDngOcrAggregate();
+  const extraPrompt = els.ocrPrompt.value.trim();
+  state.dngSheetBusy = true;
+  setDngFileState(state.activeLogsheetFileKey, { ocrStatus: "OCR", ocrError: "", reviewSaved: false });
+  showOcrProgress(1);
+  setOcrProgress(0, 1, `OCR ${file.name}`);
+  markOcrProgressItem(file.name, "running", "目前這張");
+  renderDngSheetReview();
+  setStatus(`OCR 目前這張：${file.name}`);
+  try {
+    const result = await ocrSingleFile(file, extraPrompt);
+    const rows = rowsFromOcrResult(result).map((row) => dngEditableRowFromOcrRow({
+      ...row,
+      source_filename: row.source_filename || file.name,
+      source_filenames: row.source_filenames || [file.name],
+    }));
+    const status = rows.length ? "Ready" : "No data";
+    setDngFileState(state.activeLogsheetFileKey, {
+      ocrStatus: status,
+      ocrRows: rows.length,
+      ocrResult: result,
+      ocrError: "",
+      reviewSaved: false,
+    });
+    state.dngSheetRows = rows;
+    state.dngDraftRowsByFileKey[state.activeLogsheetFileKey] = rows.map((row) => ({ ...row }));
+    setOcrProgress(1, 1, `完成 ${file.name}`);
+    markOcrProgressItem(file.name, rows.length ? "done" : "no-data", rows.length ? `${rows.length} rows，請檢查後 Save` : "沒有 rows，可手動新增後 Save");
+    renderDngSheetReview();
+    setStatus(`${file.name} 已 OCR：${rows.length} rows。請檢查後按 Save。`, rows.length === 0);
+  } catch (error) {
+    const message = error.message || String(error);
+    setDngFileState(state.activeLogsheetFileKey, { ocrStatus: "Failed", ocrError: message, reviewSaved: false });
+    addOcrError(file.name, message);
+    markOcrProgressItem(file.name, "error", message);
+    setOcrProgress(1, 1, `失敗 ${file.name}`);
+    setStatus(`${file.name} OCR 失敗：${message}`, true);
+  } finally {
+    state.dngSheetBusy = false;
+    renderDngSheetReview();
+    renderLogsheetAssignments();
+  }
+}
+
+async function saveDngCurrentSheet() {
+  const file = activeDngLogsheetFile();
+  if (!file) {
+    setStatus("請先選擇一張 D&G 工作紀錄。", true);
+    return;
+  }
+  ensureDngOcrAggregate();
+  const fileKey = state.activeLogsheetFileKey;
+  const rows = dngSheetRowsFromDom();
+  let normalizedRows = [];
+  try {
+    normalizedRows = normalizeDngSheetRowsForSave(rows, file.name);
+  } catch (error) {
+    setStatus(error.message || String(error), true);
+    return;
+  }
+
+  replaceDngOcrRowsForFile(fileKey, normalizedRows, file.ocrResult || null);
+  setDngFileState(fileKey, {
+    ocrStatus: "Saved",
+    ocrRows: normalizedRows.length,
+    reviewSaved: true,
+    ocrError: "",
+  });
+  state.dngDraftRowsByFileKey[fileKey] = normalizedRows.map((row) => dngEditableRowFromOcrRow(row));
+  syncDngAggregateCounts();
+  renderOcrResult();
+  if (ocrRows().length) {
+    await refreshRosterComparison({ userAction: true });
+  } else {
+    clearComparison(currentProjectProfile().waitingActualMessage);
+  }
+
+  const nextFile = nextDngFileToReview(fileKey);
+  if (nextFile) {
+    selectDngLogsheetFile(logsheetFileKey(nextFile.name));
+    setStatus(`已 Save ${file.name}，請處理下一張：${nextFile.name}`);
+  } else {
+    renderDngSheetReview();
+    if (ocrRows().length) setWorkflowStep("manage-schedule");
+    setStatus(`已 Save ${file.name}。D&G 工作紀錄已逐張處理完成。`);
+  }
+}
+
+function createDngBlankSheetRow(filename) {
+  return dngEditableRowFromOcrRow({
+    name: "",
+    date: "",
+    in: "",
+    out: "",
+    source_filename: filename,
+    source_filenames: [filename],
+  });
+}
+
+function dngEditableRowFromOcrRow(row) {
+  return {
+    date: display(row?.date).trim(),
+    name: display(row?.name).trim(),
+    in: display(row?.in).trim(),
+    out: display(row?.out).trim(),
+  };
+}
+
+function normalizeDngSheetRowsForSave(rows, filename) {
+  return (rows || [])
+    .map((row, index) => {
+      const name = display(row.name).trim();
+      const date = alignOcrDateToSchedule(display(row.date).trim());
+      const inputIn = display(row.in).trim();
+      const inputOut = display(row.out).trim();
+      const inTime = inputIn ? normalizeManualActualTime(inputIn) : "";
+      const outTime = inputOut ? normalizeManualActualTime(inputOut) : "";
+      if (inTime === null) throw new Error(`第 ${index + 1} 列 In 時間格式不正確，可輸入 09:30 或 0930。`);
+      if (outTime === null) throw new Error(`第 ${index + 1} 列 Out 時間格式不正確，可輸入 21:30 或 2130。`);
+      if (!name && !date && !inTime && !outTime) return null;
+      return {
+        name: name || null,
+        date: date || null,
+        in: inTime || null,
+        out: outTime || null,
+        source_filename: filename,
+        source_filenames: [filename],
+        all_times: [inTime, outTime].filter(Boolean).sort(compareTimes),
+        warnings: ["D&G 逐張覆核"],
+      };
+    })
+    .filter(Boolean);
+}
+
+function replaceDngOcrRowsForFile(fileKey, rows, result) {
+  if (!state.ocr) return;
+  ensureOcrAggregateShape();
+  const remainingRows = ocrRows().filter((row) => !ocrRowFileKeys(row).has(fileKey));
+  state.ocr.daily_rows = mergeOcrDailyRows([...remainingRows, ...rows]);
+  state.ocr.results = (state.ocr.results || []).filter((item) => !ocrResultMatchesFileKey(item, fileKey));
+  if (result) {
+    const manualResult = {
+      ...result,
+      daily_rows: rows,
+      structured: {
+        ...(result.structured || {}),
+        daily_rows: rows,
+      },
+    };
+    state.ocr.results.push(manualResult);
+    state.ocr.configured_model = state.ocr.configured_model || result.configured_model || "";
+    state.ocr.response_model = state.ocr.response_model || result.response_model || "";
+    state.ocr.finish_reason = state.ocr.finish_reason || result.finish_reason || "";
+  }
+  state.ocr.structured.results = state.ocr.results.map((item) => item.structured || null);
+  state.ocr.structured.daily_rows = state.ocr.daily_rows;
+  state.ocr.errors = (state.ocr.errors || []).filter((item) => logsheetFileKey(item.source_filename) !== fileKey);
+  state.ocr.no_data_files = (state.ocr.no_data_files || []).filter((filename) => logsheetFileKey(filename) !== fileKey);
+  if (!rows.length) {
+    const filename = logsheetFileByKey(fileKey)?.name || fileKey;
+    state.ocr.no_data_files.push(filename);
+  }
+  applyLogsheetStaffAssignmentsToRows();
+  state.ocr.usage = combineUsage(state.ocr.results);
+}
+
+function ocrResultMatchesFileKey(result, fileKey) {
+  return [result?.source_filename, ...sourceFilenameArray(result?.source_filenames)]
+    .some((filename) => logsheetFileKey(filename) === fileKey);
+}
+
+function nextDngFileToReview(currentFileKey) {
+  const files = state.logsheetFiles || [];
+  const currentIndex = files.findIndex((file) => logsheetFileKey(file.name) === currentFileKey);
+  const after = files.slice(Math.max(currentIndex + 1, 0)).find((file) => !file.reviewSaved);
+  if (after) return after;
+  return files.find((file) => !file.reviewSaved) || null;
+}
+
+function ensureDngOcrAggregate() {
+  const files = Array.from(els.logsheetFile?.files || []);
+  if (!state.ocr) {
+    state.ocr = createOcrAggregate(files.length ? files : state.logsheetFiles);
+  }
+  syncDngOcrAggregateForFiles(files.length ? files : state.logsheetFiles);
+}
+
+function syncDngOcrAggregateForFiles(files) {
+  if (!isDAndGProfile()) return;
+  const sourceFiles = Array.from(files || []);
+  const sourceFilenames = sourceFiles.map((file) => file.name).filter(Boolean);
+  const sourceKeys = new Set(sourceFilenames.map(logsheetFileKey));
+  Object.keys(state.dngDraftRowsByFileKey || {}).forEach((key) => {
+    if (!sourceKeys.has(key)) delete state.dngDraftRowsByFileKey[key];
+  });
+  if (!state.ocr) {
+    state.ocr = createOcrAggregate(sourceFiles);
+  }
+  ensureOcrAggregateShape();
+  state.ocr.source_count = sourceFilenames.length;
+  state.ocr.source_filename = sourceFilenames.join(", ");
+  state.ocr.source_filenames = sourceFilenames;
+  state.ocr.daily_rows = ocrRows().filter((row) => [...ocrRowFileKeys(row)].some((key) => sourceKeys.has(key)));
+  state.ocr.results = (state.ocr.results || []).filter((result) => ocrResultMatchesAnyFileKey(result, sourceKeys));
+  state.ocr.errors = (state.ocr.errors || []).filter((item) => sourceKeys.has(logsheetFileKey(item.source_filename)));
+  state.ocr.no_data_files = (state.ocr.no_data_files || []).filter((filename) => sourceKeys.has(logsheetFileKey(filename)));
+  state.ocr.structured.results = state.ocr.results.map((result) => result.structured || null);
+  state.ocr.structured.daily_rows = state.ocr.daily_rows;
+  syncDngAggregateCounts();
+}
+
+function ocrResultMatchesAnyFileKey(result, fileKeys) {
+  return [result?.source_filename, ...sourceFilenameArray(result?.source_filenames)]
+    .some((filename) => fileKeys.has(logsheetFileKey(filename)));
+}
+
+function sourceFilenameArray(value) {
+  if (Array.isArray(value)) return value;
+  return value ? [value] : [];
+}
+
+function syncDngAggregateCounts() {
+  if (!state.ocr) return;
+  ensureOcrAggregateShape();
+  state.ocr.processed_count = (state.logsheetFiles || []).filter((file) => file.reviewSaved || file.ocrError).length;
+  state.ocr.usage = combineUsage(state.ocr.results || []);
+}
+
+function ensureOcrAggregateShape() {
+  if (!state.ocr) return;
+  if (!Array.isArray(state.ocr.daily_rows)) state.ocr.daily_rows = [];
+  if (!Array.isArray(state.ocr.results)) state.ocr.results = [];
+  if (!Array.isArray(state.ocr.errors)) state.ocr.errors = [];
+  if (!Array.isArray(state.ocr.no_data_files)) state.ocr.no_data_files = [];
+  if (!state.ocr.structured || typeof state.ocr.structured !== "object") {
+    state.ocr.structured = { document_type: "logsheet", daily_rows: [], results: [] };
+  }
+  if (!Array.isArray(state.ocr.structured.daily_rows)) state.ocr.structured.daily_rows = state.ocr.daily_rows;
+  if (!Array.isArray(state.ocr.structured.results)) state.ocr.structured.results = [];
+}
+
+function setDngFileState(fileKey, patch) {
+  const file = logsheetFileByKey(fileKey);
+  if (!file) return;
+  Object.assign(file, patch);
+}
+
+function logsheetInputFileByKey(fileKey) {
+  return Array.from(els.logsheetFile?.files || [])
+    .find((file) => logsheetFileKey(file.name) === fileKey) || null;
+}
+
 function staffAssignmentOptions() {
   return [...new Set((state.schedule?.staff || [])
     .map((staff) => String(staff.name || "").trim())
@@ -891,6 +1420,10 @@ function sourceLinksHtml(filenames, staffName = "") {
 }
 
 function logsheetFileStatus(filename, rowCount) {
+  const file = logsheetFileByKey(logsheetFileKey(filename));
+  if (isDAndGProfile() && file) {
+    return dngSheetStatusLabel(file, rowCount);
+  }
   const errors = state.ocr?.errors || [];
   const noDataFiles = state.ocr?.no_data_files || [];
   if (errors.some((item) => logsheetFileKey(item.source_filename) === logsheetFileKey(filename))) return "Failed";
@@ -978,6 +1511,10 @@ function clearPage() {
   state.scheduleConfirmed = false;
   state.selectedRosterStaff = "";
   state.logsheetFiles = [];
+  state.activeLogsheetFileKey = "";
+  state.dngSheetRows = [];
+  state.dngDraftRowsByFileKey = {};
+  state.dngSheetBusy = false;
   state.rosterIssuesExpanded = false;
   state.exportTableDataset = DEFAULT_EXPORT_TABLE_DATASET;
   state.exportTableUserSelected = false;
@@ -1321,6 +1858,7 @@ function renderOcrResult() {
   els.ocrMeta.textContent = `${source}${model ? " · " + model : ""}${hasStructuredJson ? " · 已解析 JSON" : " · 原文輸出"} · ${rows.length} 筆`;
   renderOcrTable(rows);
   renderLogsheetAssignments();
+  renderDngSheetReview();
   els.ocrOutput.hidden = false;
   els.ocrOutput.textContent = pretty(state.ocr);
   updateWorkflowState();
@@ -1335,6 +1873,7 @@ function clearOcrResult() {
   clearTable(els.ocrTableBody);
   hideOcrProgress();
   renderLogsheetAssignments();
+  renderDngSheetReview();
   updateWorkflowState();
 }
 
@@ -3031,6 +3570,7 @@ function renderAll() {
   renderShiftTimes(schedule.shift_times || {});
   renderStaffFilter(schedule.staff || []);
   renderLogsheetAssignments();
+  renderDngSheetReview();
   renderHolidayStatus();
   renderEntries();
   els.diagnostics.textContent = pretty(schedule.diagnostics || {});
