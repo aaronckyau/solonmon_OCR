@@ -222,7 +222,9 @@ D&G project instruction:
 - Extract every visible form independently. Use the handwritten staff name in the form's name field for each row.
 - Do not infer a staff name from generic filenames such as "1 and 2 Apr 1.jpg", "3 Apr.jpg", or "Timesheet".
 - The work table columns are date/day, in time, store signature, out time, store signature, then review columns. Use only handwritten in/out times from the same table row.
-- Output one daily_rows item per filled table row per staff. Dates may be d/m, d-MMM, or day numbers. Prefer full YYYY-MM-DD dates; use {default_year} when the year is not visible unless the user instruction says otherwise.
+- The current sheet image is the source of truth for OCR rows. Count the visible handwritten person/table rows and output one daily_rows item for every visible row, even when a time cell is blank or unreadable.
+- Include rows that have a visible person name, phone/name evidence, signature mark, or handwritten date/time evidence. Use null for missing in/out times instead of dropping the row.
+- Dates may be d/m, d-MMM, or day numbers. Prefer full YYYY-MM-DD dates; use {default_year} when the year is not visible unless the user instruction says otherwise.
 - Ignore blank printed am/pm markers, signatures, review stamps, and bank/account fields.
 """.strip()
     if extra:

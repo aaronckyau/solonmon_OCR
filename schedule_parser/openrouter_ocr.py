@@ -303,8 +303,8 @@ def _page_prompt(prompt: str | None, page_number: int, total_pages: int) -> str:
     extra = (prompt or "").strip()
     page_instruction = (
         f"This is page {page_number} of {total_pages} from one PDF. "
-        "Extract only readable worked rows on this page. "
-        "Do not include blank rows or rows without punch times."
+        "Extract every visible non-blank worked/person row on this page. "
+        "Keep rows with readable names, dates, signatures, or partial time evidence even when punch times are blank or unreadable."
     )
     return f"{extra}\n{page_instruction}".strip()
 
@@ -464,14 +464,15 @@ def normalize_logsheet_daily_rows(
     filename_name_hint = _infer_staff_name_from_filename(source_filename)
     structured_name_hint = _extract_name_hint(structured)
     year_month = _extract_year_month_hint(structured, source_filename, context_hint)
+    keep_visible_rows_without_times = _is_d_and_g_context(context_hint)
     rows: list[dict[str, Any]] = []
     for item in _candidate_logsheet_rows(structured):
         if not isinstance(item, dict):
             continue
         times = _extract_times_from_row(item)
-        if not times:
-            continue
         ocr_name_hint = _string_or_none(_first_present(item, NAME_FIELD_NAMES)) or structured_name_hint
+        if not times and not (keep_visible_rows_without_times and ocr_name_hint):
+            continue
         row_name = filename_name_hint or ocr_name_hint
         row = {
             "name": row_name,
@@ -483,11 +484,17 @@ def normalize_logsheet_daily_rows(
             "all_times": sorted(set(times), key=_time_minutes),
             "warnings": item.get("warnings") if isinstance(item.get("warnings"), list) else [],
         }
-        row["in"] = row["all_times"][0]
-        row["out"] = row["all_times"][-1] if len(row["all_times"]) > 1 else None
+        if row["all_times"]:
+            row["in"] = row["all_times"][0]
+            row["out"] = row["all_times"][-1] if len(row["all_times"]) > 1 else None
         rows.append(row)
 
     return merge_logsheet_daily_rows(rows)
+
+
+def _is_d_and_g_context(context_hint: str | None) -> bool:
+    text = (context_hint or "").lower()
+    return any(marker in text for marker in ("d&g", "daniel & co", "promoter work record"))
 
 
 def merge_logsheet_daily_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -567,6 +574,7 @@ Rules:
 - For register/sign-in sheet PDFs with many helpers, output one "daily_rows" item per person per worked date.
 - For register/sign-in sheet PDFs, preserve each helper/staff name in the row-level "name" field.
 - Treat columns such as NAME, HELPER, DATE, SIGN IN, SIGN OUT, CHECK IN, and CHECK OUT as valid source columns.
+- For D&G/Daniel & Co promoter work record sheets, the current image is the source of truth: output every visible non-blank person/table row, including rows with only a readable name/date/signature and no readable punch time.
 - For each date/day row, collect every readable handwritten punch time in that row from MORNING, AFTERNOON, and OVER TIME columns.
 - If a handwritten time includes the day prefix, such as "21 09:40", normalize the time to "09:40".
 - The printed or left-margin row number is the date/day only. Never combine that row number with a nearby time, and never treat it as a punch time.
@@ -575,6 +583,7 @@ Rules:
 - In "daily_rows", output one row per worked day only.
 - In "daily_rows", "in" must be the first/earliest readable punch time of that day, and "out" must be the last/latest readable punch time of that day.
 - If there is only one readable punch time for a day, put that time in "in" and use null for "out".
+- If a D&G row is visible but the punch time is unreadable or blank, keep the row with null "in", null "out", and a Traditional Chinese warning.
 - If the staff name is blank on the card, infer it from the source filename when the filename contains a human name.
 - If month/year is blank on the card, infer it only from the source filename/path or user instruction; otherwise keep date as the visible day number.
 - Put any uncertainty in "warnings" in Traditional Chinese.

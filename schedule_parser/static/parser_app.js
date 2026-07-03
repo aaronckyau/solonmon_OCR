@@ -1167,41 +1167,11 @@ function buildDngSheetReviewRows(rawRows, filename, forcedDate = "") {
     originalName: row?.originalName || row?.original_name || row?.name || "",
     source_filename: row?.source_filename || filename,
     source_filenames: row?.source_filenames || [filename],
+    isOcrRow: true,
   }));
   const sheetDate = forcedDate || inferDngSheetDate(ocrRows, filename);
-  const scheduledEntries = dngScheduledEntriesForDate(sheetDate);
-  if (!sheetDate || !scheduledEntries.length) {
-    return ocrRows.map((row) => dngRecomputeSheetRowStatus({
-      ...row,
-      date: row.date || sheetDate,
-      originalName: row.originalName || row.name,
-      matchStatus: row.name ? "manual" : "unmatched",
-      isScheduled: false,
-    }));
-  }
-
-  const usedOcrIndexes = new Set();
-  const reviewRows = scheduledEntries.map((entry) => {
-    const match = dngBestOcrMatchForEntry(entry, ocrRows, usedOcrIndexes);
-    if (match) usedOcrIndexes.add(match.index);
-    return dngReviewRowFromScheduleEntry(entry, match?.row || null, match?.score || 0, filename);
-  });
-
-  ocrRows.forEach((row, index) => {
-    if (usedOcrIndexes.has(index)) return;
-    if (!row.name && !row.in && !row.out) return;
-    reviewRows.push(dngRecomputeSheetRowStatus({
-      ...row,
-      date: sheetDate,
-      name: "",
-      originalName: row.originalName || row.name,
-      matchScore: 0,
-      matchStatus: "unmatched",
-      isScheduled: false,
-    }));
-  });
-
-  return reviewRows;
+  const usedScheduleKeys = new Set();
+  return ocrRows.map((row, index) => dngReviewRowFromOcrRow(row, sheetDate, filename, usedScheduleKeys, index));
 }
 
 function inferDngSheetDate(rawRows, filename = "") {
@@ -1215,6 +1185,82 @@ function inferDngSheetDate(rawRows, filename = "") {
     };
   }).sort((left, right) => right.score - left.score || left.value.localeCompare(right.value));
   return candidates[0]?.score > 0 ? candidates[0].value : "";
+}
+
+function dngReviewRowFromOcrRow(row, sheetDate, filename, usedScheduleKeys, index) {
+  const rowDate = dngOcrRowDate(row, sheetDate, filename);
+  const scheduledEntries = dngScheduledEntriesForDate(rowDate);
+  const match = dngBestScheduledMatchForOcrRow(row, scheduledEntries, usedScheduleKeys);
+  if (match) {
+    usedScheduleKeys.add(dngScheduleEntryKey(match.entry));
+    return dngRecomputeSheetRowStatus({
+      ...row,
+      date: rowDate,
+      name: match.entry.staff_name,
+      originalName: row.originalName || row.name,
+      scheduledIn: match.entry.scheduled_in,
+      scheduledOut: match.entry.scheduled_out,
+      shiftCode: match.entry.shift_code,
+      matchScore: match.score,
+      isScheduled: true,
+      isOcrRow: true,
+      source_filename: row.source_filename || filename,
+      source_filenames: row.source_filenames || [filename],
+      ocrRowIndex: index,
+    });
+  }
+
+  const exactStaff = dngExactStaffName(row.name);
+  return dngRecomputeSheetRowStatus({
+    ...row,
+    date: rowDate,
+    name: exactStaff,
+    originalName: row.originalName || row.name,
+    matchScore: exactStaff ? 1 : 0,
+    matchStatus: exactStaff ? "manual" : "unmatched",
+    isScheduled: false,
+    isOcrRow: true,
+    source_filename: row.source_filename || filename,
+    source_filenames: row.source_filenames || [filename],
+    ocrRowIndex: index,
+  });
+}
+
+function dngOcrRowDate(row, sheetDate, filename) {
+  const rawDate = display(row?.date).trim();
+  const alignedDate = alignOcrDateToSchedule(rawDate);
+  if (alignedDate && scheduleDateValues().includes(alignedDate)) return alignedDate;
+  const selectedDate = dngSelectedScheduleDate(rawDate, filename);
+  return selectedDate || sheetDate || rawDate;
+}
+
+function dngBestScheduledMatchForOcrRow(row, entries, usedScheduleKeys) {
+  const query = row.originalName || row.name;
+  const matches = (entries || [])
+    .map((entry) => ({
+      entry,
+      score: dngTextSimilarityScore(query, entry.staff_name),
+    }))
+    .filter((item) => item.score >= 0.42 && !usedScheduleKeys.has(dngScheduleEntryKey(item.entry)))
+    .sort((left, right) => right.score - left.score || left.entry.staff_name.localeCompare(right.entry.staff_name));
+  return matches[0] || null;
+}
+
+function dngScheduleEntryKey(entry) {
+  return [
+    entry.staff_name,
+    entry.date,
+    entry.scheduled_in,
+    entry.scheduled_out,
+    entry.shift_code,
+    entry.schedule_cell || "",
+  ].join("|");
+}
+
+function dngExactStaffName(value) {
+  const text = display(value).trim();
+  if (!text) return "";
+  return staffAssignmentOptions().find((name) => sameStaffName(name, text)) || "";
 }
 
 function dngScheduledEntriesForDate(date) {
@@ -1281,12 +1327,40 @@ function dngReviewRowFromScheduleEntry(entry, matchedRow, matchScore, filename) 
   return dngRecomputeSheetRowStatus(row);
 }
 
+function dngApplyScheduleHintToRow(row) {
+  const next = dngEditableRowFromOcrRow(row);
+  const entry = dngScheduledEntriesForDate(next.date)
+    .find((item) => sameStaffName(item.staff_name, next.name));
+  if (!entry) {
+    return {
+      ...next,
+      scheduledIn: "",
+      scheduledOut: "",
+      shiftCode: "",
+      isScheduled: false,
+    };
+  }
+  return {
+    ...next,
+    name: entry.staff_name,
+    scheduledIn: entry.scheduled_in,
+    scheduledOut: entry.scheduled_out,
+    shiftCode: entry.shift_code,
+    isScheduled: true,
+    matchScore: next.matchScore || 1,
+  };
+}
+
 function dngRecomputeSheetRowStatus(row) {
   const next = dngEditableRowFromOcrRow(row);
   const hasActual = Boolean(next.in || next.out);
   if (!hasActual) {
     next.lateMinutes = 0;
-    next.matchStatus = next.isScheduled ? "missing" : "unmatched";
+    if (next.isOcrRow) {
+      next.matchStatus = next.isScheduled ? "no_time" : "unmatched";
+    } else {
+      next.matchStatus = next.isScheduled ? "missing" : "unmatched";
+    }
     return next;
   }
   const actualIn = timeMinutes(normalizeManualActualTime(next.in) || next.in);
@@ -1315,6 +1389,7 @@ function dngSheetRowClass(row) {
   const status = row.matchStatus || "";
   if (status === "late") return "is-late";
   if (status === "attended" || status === "manual") return "is-attended";
+  if (status === "no_time") return "is-no-time";
   if (status === "missing") return "is-missing";
   if (status === "unmatched") return "is-unmatched";
   return "";
@@ -1325,6 +1400,7 @@ function dngStatusBadgeHtml(row) {
   let label = "待核對";
   if (status === "attended") label = "已出席";
   if (status === "late") label = `遲到 ${row.lateMinutes || 0} 分鐘`;
+  if (status === "no_time") label = "OCR row，未讀到時間";
   if (status === "missing") label = "未在此張找到";
   if (status === "unmatched") label = row.originalName ? `需選員工：${row.originalName}` : "需手動選員工";
   if (status === "manual") label = "手動配對";
@@ -1468,7 +1544,7 @@ function dngSheetRowsFromDom() {
     ["date", "name", "in", "out"].forEach((field) => {
       row[field] = tableRow.querySelector(`[data-dng-field="${field}"]`)?.value.trim() || "";
     });
-    return dngRecomputeSheetRowStatus(row);
+    return dngRecomputeSheetRowStatus(dngApplyScheduleHintToRow(row));
   });
 }
 
@@ -1667,6 +1743,8 @@ function dngEditableRowFromOcrRow(row) {
     lateMinutes: Number(row?.lateMinutes || row?.late_minutes || 0) || 0,
     matchScore: Number(row?.matchScore || row?.match_score || 0) || 0,
     isScheduled: Boolean(row?.isScheduled ?? row?.is_scheduled),
+    isOcrRow: Boolean(row?.isOcrRow ?? row?.is_ocr_row),
+    ocrRowIndex: Number(row?.ocrRowIndex ?? row?.ocr_row_index ?? -1),
     source_filename: display(row?.source_filename).trim(),
     source_filenames: sourceFilenames,
   };

@@ -252,6 +252,27 @@ def test_normalize_d_and_g_generic_date_filename_and_day_month_date():
     assert rows[1]["date"] == "2026-04-02"
 
 
+def test_normalize_d_and_g_keeps_visible_rows_without_times():
+    rows = openrouter_ocr.normalize_logsheet_daily_rows(
+        {
+            "daily_rows": [
+                {"name": "Chow Yee Ling Dilys", "date": "8"},
+                {"name": "Ho Ka Yan", "date": "8", "in": "10:30", "out": "21:30"},
+            ]
+        },
+        "8 Apr.jpg",
+        context_hint="D&G project instruction:\nApril 2026",
+    )
+
+    assert len(rows) == 2
+    assert rows[0]["name"] == "Chow Yee Ling Dilys"
+    assert rows[0]["date"] == "2026-04-08"
+    assert rows[0]["in"] is None
+    assert rows[0]["out"] is None
+    assert rows[0]["all_times"] == []
+    assert rows[1]["in"] == "10:30"
+
+
 def test_normalize_prefers_filename_staff_name_over_card_name():
     rows = openrouter_ocr.normalize_logsheet_daily_rows(
         {

@@ -984,6 +984,10 @@ h3 {
   background: #fff7ed;
 }
 
+.dng-sheet-table tr.is-no-time td {
+  background: #fffbeb;
+}
+
 .dng-scheduled-cell {
   min-width: 94px;
   color: #475467;
@@ -1031,6 +1035,12 @@ h3 {
   border-color: #fdba74;
   background: #ffedd5;
   color: #9a3412;
+}
+
+.dng-status-pill.no_time {
+  border-color: #fbbf24;
+  background: #fef3c7;
+  color: #92400e;
 }
 
 .dng-sheet-table .danger {

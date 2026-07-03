@@ -344,11 +344,15 @@ def test_d_and_g_logsheet_review_is_one_sheet_at_a_time():
     assert "function dngDateSimilarityScore" in script
     assert "function buildDngSheetReviewRows" in script
     assert "function inferDngSheetDate" in script
+    assert "function dngReviewRowFromOcrRow" in script
+    assert "function dngBestScheduledMatchForOcrRow" in script
+    assert "function dngApplyScheduleHintToRow" in script
     assert "function dngScheduledEntriesForDate" in script
     assert "function dngBestOcrMatchForEntry" in script
     assert "function dngRecomputeSheetRowStatus" in script
     assert "function dngSheetRowClass" in script
     assert "function dngStatusBadgeHtml" in script
+    assert "OCR row，未讀到時間" in script
     assert "if (!inTime && !outTime) return null;" in script
     assert "function zoomDngPreview" in script
     assert "function handleDngPreviewWheel" in script
@@ -371,6 +375,7 @@ def test_d_and_g_logsheet_review_is_one_sheet_at_a_time():
     assert ".dng-sheet-table select" in styles
     assert ".dng-sheet-table tr.is-attended" in styles
     assert ".dng-sheet-table tr.is-late" in styles
+    assert ".dng-sheet-table tr.is-no-time" in styles
     assert ".dng-status-pill" in styles
 
 
@@ -523,6 +528,8 @@ def test_ocr_logsheet_adds_d_and_g_project_prompt(monkeypatch):
     assert payload["ok"] is True
     assert "D&G project instruction" in calls[0][3]
     assert "multiple separate paper forms" in calls[0][3]
+    assert "current sheet image is the source of truth for OCR rows" in calls[0][3]
+    assert "every visible row" in calls[0][3]
     assert "1 and 2 Apr 1.jpg" in calls[0][3]
     assert "April 2026" in calls[0][3]
 
