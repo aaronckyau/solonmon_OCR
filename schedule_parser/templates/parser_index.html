@@ -345,7 +345,36 @@
             <button id="downloadJsonButton" type="button" class="secondary">下載修正 JSON</button>
           </div>
         </div>
-        <p class="step-note">第一階段先提供修正 JSON 和 OCR JSON。正式寫回 Oil Street Excel template 會在下一階段加入。</p>
+
+        <section class="sub-panel export-table-panel">
+          <div class="export-table-toolbar">
+            <div>
+              <h3>Excel 貼上表格</h3>
+              <div id="exportTableSelectionStatus" class="muted">尚未載入資料。</div>
+            </div>
+            <div class="export-table-tools">
+              <label>
+                <span>表格</span>
+                <select id="exportTableDatasetSelect"></select>
+              </label>
+              <label class="checkbox-label">
+                <input id="exportTableIncludeHeadersInput" type="checkbox" checked>
+                <span>包含標題</span>
+              </label>
+              <button id="copyExportTableSelectionButton" type="button" class="secondary">複製選取</button>
+              <button id="copyExportTableAllButton" type="button" class="secondary">複製全部</button>
+              <button id="clearExportTableSelectionButton" type="button" class="secondary">清除選取</button>
+            </div>
+          </div>
+          <div class="table-wrap export-table-wrap">
+            <table class="export-table">
+              <thead id="exportTableHead"></thead>
+              <tbody id="exportTableBody">
+                <tr><td class="muted">尚未載入資料。</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
 
         <details class="sub-panel">
           <summary>日期欄位</summary>

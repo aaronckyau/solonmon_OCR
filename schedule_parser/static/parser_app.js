@@ -99,6 +99,12 @@ const state = {
   rosterImageFileName: "",
   rosterImageIndex: 0,
   rosterIssuesExpanded: false,
+  exportTableDataset: "schedule_entries",
+  exportTableSelection: {
+    rows: new Set(),
+    columns: new Set(),
+    cells: new Set(),
+  },
 };
 
 let comparisonRequestId = 0;
@@ -159,6 +165,14 @@ const els = {
   resetReview: document.getElementById("resetReviewButton"),
   copyJson: document.getElementById("copyJsonButton"),
   downloadJson: document.getElementById("downloadJsonButton"),
+  exportTableDataset: document.getElementById("exportTableDatasetSelect"),
+  exportTableIncludeHeaders: document.getElementById("exportTableIncludeHeadersInput"),
+  exportTableSelectionStatus: document.getElementById("exportTableSelectionStatus"),
+  exportTableHead: document.getElementById("exportTableHead"),
+  exportTableBody: document.getElementById("exportTableBody"),
+  copyExportTableSelection: document.getElementById("copyExportTableSelectionButton"),
+  copyExportTableAll: document.getElementById("copyExportTableAllButton"),
+  clearExportTableSelection: document.getElementById("clearExportTableSelectionButton"),
   copyOcr: document.getElementById("copyOcrButton"),
   downloadOcr: document.getElementById("downloadOcrButton"),
   workflowSteps: [...document.querySelectorAll("[data-workflow-step]")],
@@ -209,6 +223,13 @@ els.entries.addEventListener("change", handleScheduleSummaryOverrideChange);
 els.resetReview.addEventListener("click", resetReview);
 els.copyJson.addEventListener("click", copyJson);
 els.downloadJson.addEventListener("click", downloadJson);
+els.exportTableDataset?.addEventListener("change", handleExportTableDatasetChange);
+els.exportTableBody?.addEventListener("click", handleExportTableClick);
+els.exportTableHead?.addEventListener("click", handleExportTableClick);
+els.exportTableIncludeHeaders?.addEventListener("change", updateExportTableSelectionStatus);
+els.copyExportTableSelection?.addEventListener("click", () => copyExportTableSelection("selected"));
+els.copyExportTableAll?.addEventListener("click", () => copyExportTableSelection("all"));
+els.clearExportTableSelection?.addEventListener("click", clearExportTableSelection);
 els.copyOcr?.addEventListener("click", copyOcrJson);
 els.downloadOcr?.addEventListener("click", downloadOcrJson);
 els.compareButton.addEventListener("click", () => refreshRosterComparison({ userAction: true }));
@@ -639,6 +660,8 @@ function clearPage() {
   state.selectedRosterStaff = "";
   state.logsheetFiles = [];
   state.rosterIssuesExpanded = false;
+  state.exportTableDataset = "schedule_entries";
+  resetExportTableSelection();
   els.file.value = "";
   els.logsheetFile.value = "";
   els.ocrPrompt.value = "";
@@ -672,6 +695,7 @@ function clearPage() {
   els.entryCount.textContent = "0 筆";
   els.diagnostics.textContent = "";
   els.rawJson.textContent = "";
+  clearExportTable();
   clearRosterSummary();
   updateWorkflowState();
   setStatus("就緒");
@@ -684,6 +708,7 @@ function handleHolidayOptionsChange() {
   renderHolidayStatus();
   renderEntries();
   if (state.comparison) renderRosterSummary(state.comparison.rows || []);
+  renderExportTable();
 }
 
 async function handleHolidayUploadChange(event) {
@@ -700,6 +725,7 @@ async function handleHolidayUploadChange(event) {
     renderHolidayStatus(`已載入 ${holidays.length} 個自訂假期`);
     renderEntries();
     if (state.comparison) renderRosterSummary(state.comparison.rows || []);
+    renderExportTable();
     setStatus(`已載入 ${holidays.length} 個自訂假期。`);
   } catch (error) {
     renderHolidayStatus(error.message || String(error), true);
@@ -1063,6 +1089,7 @@ function clearComparison(message) {
   clearTable(els.compareTableBody);
   els.compareOutput.textContent = "";
   clearRosterSummary();
+  renderExportTable();
   updateWorkflowState();
 }
 
@@ -1094,6 +1121,7 @@ function renderComparison(comparison) {
   renderRosterSummary(rows);
   renderLogsheetAssignments();
   els.compareOutput.textContent = pretty(comparison);
+  renderExportTable();
   updateWorkflowState();
 }
 
@@ -2670,6 +2698,7 @@ function renderAll() {
   renderEntries();
   els.diagnostics.textContent = pretty(schedule.diagnostics || {});
   els.rawJson.textContent = pretty(schedule);
+  renderExportTable();
   updateWorkflowState();
 }
 
@@ -2847,6 +2876,7 @@ function handleScheduleSummaryOverrideChange(event) {
   renderEntries();
   if (state.comparison) renderRosterSummary(state.comparison.rows || []);
   els.rawJson.textContent = pretty(state.schedule);
+  renderExportTable();
   updateWorkflowState();
   setStatus(`${staff} ${scheduleSummaryFieldLabel(field)} 已更新。`);
 }
@@ -3109,6 +3139,407 @@ function clearTable(tbody) {
   tbody.innerHTML = "";
 }
 
+function resetExportTableSelection() {
+  state.exportTableSelection = {
+    rows: new Set(),
+    columns: new Set(),
+    cells: new Set(),
+  };
+}
+
+function clearExportTable() {
+  resetExportTableSelection();
+  if (els.exportTableDataset) {
+    els.exportTableDataset.innerHTML = "";
+    els.exportTableDataset.disabled = true;
+  }
+  if (els.exportTableHead) els.exportTableHead.innerHTML = "";
+  if (els.exportTableBody) {
+    els.exportTableBody.innerHTML = '<tr><td class="muted">尚未載入資料。</td></tr>';
+  }
+  updateExportTableSelectionStatus();
+}
+
+function exportTableDatasets() {
+  const datasets = [
+    {
+      id: "schedule_entries",
+      label: "排班資料",
+      columns: [
+        ["date", "日期"],
+        ["day", "日"],
+        ["staff_name", "員工"],
+        ["shift_code", "班次"],
+        ["scheduled_in", "預定上班"],
+        ["scheduled_out", "預定下班"],
+        ["scheduled_hours", "預定時數"],
+        ["actual_in", "實際上班"],
+        ["actual_out", "實際下班"],
+        ["actual_hours", "實際時數"],
+        ["status", "狀態"],
+        ["source_filename", "來源文件"],
+        ["schedule_cell", "排班儲存格"],
+        ["resolution_source", "解析來源"],
+        ["warnings", "警告"],
+      ],
+      rows: exportScheduleEntryRows(),
+    },
+    {
+      id: "roster_summary",
+      label: "員工排班彙總",
+      columns: [
+        ["staff", "員工"],
+        ["days", "天數"],
+        ["hours", "預定時數"],
+        ["normalDays", "Normal 天數"],
+        ["normalHours", "Normal 時數"],
+        ["publicHolidayDays", "PH 天數"],
+        ["publicHolidayHours", "PH 時數"],
+        ["actualHours", "實際時數"],
+        ["actualDiff", "實際差異"],
+        ["issues", "需覆核"],
+        ["schedule", "排班日"],
+      ],
+      rows: exportRosterSummaryRows(),
+    },
+    {
+      id: "compare_rows",
+      label: "核對明細",
+      columns: [
+        ["date", "日期"],
+        ["staff_name", "員工"],
+        ["ocr_name", "OCR 姓名"],
+        ["confidence", "信心"],
+        ["shift_code", "班次"],
+        ["scheduled_in", "預定上班"],
+        ["scheduled_out", "預定下班"],
+        ["actual_in", "實際上班"],
+        ["actual_out", "實際下班"],
+        ["raw_late_minutes", "原始遲到"],
+        ["late_minutes", "計算遲到"],
+        ["early_leave_minutes", "早退"],
+        ["status", "狀態"],
+        ["flags", "標記"],
+        ["source_filename", "來源文件"],
+        ["notes", "備註"],
+      ],
+      rows: exportCompareRows(),
+    },
+    {
+      id: "shift_times",
+      label: "班次時間",
+      columns: [
+        ["code", "班次"],
+        ["start", "上班"],
+        ["end", "下班"],
+        ["hours", "時數"],
+        ["applies_to", "適用"],
+        ["specific_dates", "指定日期"],
+        ["source", "來源"],
+        ["cell", "儲存格"],
+      ],
+      rows: exportShiftTimeRows(),
+    },
+  ];
+  return datasets.filter((dataset) => dataset.rows.length);
+}
+
+function renderExportTable() {
+  if (!els.exportTableBody || !els.exportTableHead || !els.exportTableDataset) return;
+  const datasets = exportTableDatasets();
+  if (!datasets.length) {
+    clearExportTable();
+    return;
+  }
+  if (!datasets.some((dataset) => dataset.id === state.exportTableDataset)) {
+    state.exportTableDataset = datasets[0].id;
+    resetExportTableSelection();
+  }
+  els.exportTableDataset.disabled = false;
+  els.exportTableDataset.innerHTML = datasets.map((dataset) => (
+    `<option value="${escapeAttr(dataset.id)}"${dataset.id === state.exportTableDataset ? " selected" : ""}>` +
+    `${escapeHtml(dataset.label)} (${dataset.rows.length})</option>`
+  )).join("");
+  const table = currentExportTable();
+  els.exportTableHead.innerHTML = exportTableHeadHtml(table);
+  els.exportTableBody.innerHTML = exportTableBodyHtml(table);
+  updateExportTableSelectionStatus();
+}
+
+function currentExportTable() {
+  const datasets = exportTableDatasets();
+  return datasets.find((dataset) => dataset.id === state.exportTableDataset) || datasets[0] || {
+    id: "",
+    label: "",
+    columns: [],
+    rows: [],
+  };
+}
+
+function exportTableHeadHtml(table) {
+  return `
+    <tr>
+      <th class="export-row-head">
+        <button type="button" class="export-row-selector" data-export-select-all-rows="true" aria-label="選取全部列">#</button>
+      </th>
+      ${table.columns.map(([key, label]) => (
+        `<th class="${state.exportTableSelection.columns.has(key) ? "is-selected-column" : ""}">` +
+        `<button type="button" class="export-column-selector" data-export-column="${escapeAttr(key)}">${escapeHtml(label)}</button>` +
+        `</th>`
+      )).join("")}
+    </tr>
+  `;
+}
+
+function exportTableBodyHtml(table) {
+  if (!table.rows.length) {
+    return `<tr><td class="muted" colspan="${table.columns.length + 1}">沒有資料。</td></tr>`;
+  }
+  return table.rows.map((row, rowIndex) => {
+    const rowSelected = state.exportTableSelection.rows.has(rowIndex);
+    const cells = table.columns.map(([key]) => {
+      const cellKey = exportCellKey(rowIndex, key);
+      const cellSelected = state.exportTableSelection.cells.has(cellKey);
+      const columnSelected = state.exportTableSelection.columns.has(key);
+      const classes = [
+        "export-cell",
+        rowSelected ? "is-selected-row" : "",
+        columnSelected ? "is-selected-column" : "",
+        cellSelected ? "is-selected-cell" : "",
+      ].filter(Boolean).join(" ");
+      return (
+        `<td class="${classes}" data-export-row="${rowIndex}" data-export-column="${escapeAttr(key)}">` +
+        `${escapeHtml(exportCellText(row[key]))}</td>`
+      );
+    }).join("");
+    return (
+      `<tr class="${rowSelected ? "is-selected-row" : ""}">` +
+      `<th class="export-row-head">` +
+      `<button type="button" class="export-row-selector${rowSelected ? " is-selected" : ""}" data-export-row="${rowIndex}">${rowIndex + 1}</button>` +
+      `</th>${cells}</tr>`
+    );
+  }).join("");
+}
+
+function handleExportTableDatasetChange() {
+  state.exportTableDataset = els.exportTableDataset?.value || "schedule_entries";
+  resetExportTableSelection();
+  renderExportTable();
+}
+
+function handleExportTableClick(event) {
+  const allRowsButton = event.target.closest("[data-export-select-all-rows]");
+  if (allRowsButton) {
+    toggleAllExportRows();
+    renderExportTable();
+    return;
+  }
+  const columnButton = event.target.closest("[data-export-column]");
+  if (columnButton && columnButton.classList.contains("export-column-selector")) {
+    toggleSetValue(state.exportTableSelection.columns, columnButton.dataset.exportColumn || "");
+    renderExportTable();
+    return;
+  }
+  const rowButton = event.target.closest(".export-row-selector[data-export-row]");
+  if (rowButton) {
+    toggleSetValue(state.exportTableSelection.rows, Number(rowButton.dataset.exportRow));
+    renderExportTable();
+    return;
+  }
+  const cell = event.target.closest("[data-export-row][data-export-column]");
+  if (cell) {
+    toggleSetValue(state.exportTableSelection.cells, exportCellKey(Number(cell.dataset.exportRow), cell.dataset.exportColumn || ""));
+    renderExportTable();
+  }
+}
+
+function toggleAllExportRows() {
+  const table = currentExportTable();
+  if (state.exportTableSelection.rows.size === table.rows.length) {
+    state.exportTableSelection.rows.clear();
+  } else {
+    state.exportTableSelection.rows = new Set(table.rows.map((_row, index) => index));
+  }
+}
+
+function toggleSetValue(set, value) {
+  if (value === "" || Number.isNaN(value)) return;
+  if (set.has(value)) {
+    set.delete(value);
+  } else {
+    set.add(value);
+  }
+}
+
+function clearExportTableSelection() {
+  resetExportTableSelection();
+  renderExportTable();
+  setStatus("Excel 表格選取已清除。");
+}
+
+async function copyExportTableSelection(mode = "selected") {
+  const table = currentExportTable();
+  if (!table.rows.length) {
+    setStatus("沒有可複製的 Excel 表格資料。", true);
+    return;
+  }
+  const selection = exportCopySelection(table, mode);
+  const tsv = exportTableToTsv(table, selection);
+  await navigator.clipboard.writeText(tsv);
+  const columnText = selection.columns.length === table.columns.length ? "全部欄" : `${selection.columns.length} 欄`;
+  setStatus(`已複製 ${selection.rows.length} 列、${columnText}，可直接貼到 Excel。`);
+}
+
+function exportCopySelection(table, mode) {
+  if (mode === "all") {
+    return {
+      rows: table.rows.map((_row, index) => index),
+      columns: table.columns.map(([key]) => key),
+      cellOnly: false,
+    };
+  }
+  const { rows, columns, cells } = state.exportTableSelection;
+  if (!rows.size && !columns.size && cells.size) {
+    const cellRows = uniqueSorted([...cells].map((key) => Number(key.split(":")[0])));
+    const cellColumns = table.columns
+      .map(([key]) => key)
+      .filter((key) => cellRows.some((rowIndex) => cells.has(exportCellKey(rowIndex, key))));
+    return { rows: cellRows, columns: cellColumns, cellOnly: true };
+  }
+  return {
+    rows: rows.size ? uniqueSorted([...rows]) : table.rows.map((_row, index) => index),
+    columns: columns.size ? table.columns.map(([key]) => key).filter((key) => columns.has(key)) : table.columns.map(([key]) => key),
+    cellOnly: false,
+  };
+}
+
+function exportTableToTsv(table, selection) {
+  const includeHeaders = Boolean(els.exportTableIncludeHeaders?.checked);
+  const lines = [];
+  const selectedColumns = table.columns.filter(([key]) => selection.columns.includes(key));
+  if (includeHeaders) {
+    lines.push(selectedColumns.map(([_key, label]) => tsvCell(label)).join("\t"));
+  }
+  selection.rows.forEach((rowIndex) => {
+    const row = table.rows[rowIndex] || {};
+    const values = selectedColumns.map(([key]) => {
+      if (selection.cellOnly && !state.exportTableSelection.cells.has(exportCellKey(rowIndex, key))) return "";
+      return tsvCell(exportCellText(row[key]));
+    });
+    lines.push(values.join("\t"));
+  });
+  return lines.join("\n");
+}
+
+function updateExportTableSelectionStatus() {
+  if (!els.exportTableSelectionStatus) return;
+  const table = currentExportTable();
+  if (!table.rows.length) {
+    els.exportTableSelectionStatus.textContent = "尚未載入資料。";
+    return;
+  }
+  const { rows, columns, cells } = state.exportTableSelection;
+  const parts = [];
+  if (rows.size) parts.push(`${rows.size} 列`);
+  if (columns.size) parts.push(`${columns.size} 欄`);
+  if (cells.size) parts.push(`${cells.size} 格`);
+  els.exportTableSelectionStatus.textContent = `${table.label}：${table.rows.length} 列，${table.columns.length} 欄${parts.length ? `；已選 ${parts.join("、")}` : "；未選取時會複製全部"}`;
+}
+
+function exportScheduleEntryRows() {
+  const compareByScheduleKey = new Map((state.comparison?.rows || [])
+    .filter((row) => row.has_schedule)
+    .map((row) => [rosterKey(row.staff_name, row.date), row]));
+  return (state.schedule?.entries || []).map((entry) => {
+    const compareRow = compareByScheduleKey.get(rosterKey(entry.staff_name, entry.date));
+    return {
+      date: entry.date || "",
+      day: formatScheduleDayOnly(entry.date),
+      staff_name: entry.staff_name || "",
+      shift_code: entry.shift_code || entry.raw_shift_code || "",
+      scheduled_in: entry.scheduled_in || "",
+      scheduled_out: entry.scheduled_out || "",
+      scheduled_hours: formatRosterHours(scheduleEntryHours(entry)),
+      actual_in: compareRow?.actual_in || "",
+      actual_out: compareRow?.actual_out || "",
+      actual_hours: compareRow?.has_actual ? formatRosterHours(actualDurationHours(compareRow.actual_in, compareRow.actual_out)) : "",
+      status: compareRow ? comparisonStatusLabelForRow(compareRow) : "",
+      source_filename: sourceFilenamesForRow(compareRow).join("；"),
+      schedule_cell: entry.schedule_cell || "",
+      resolution_source: entry.resolution_source || "",
+      warnings: (entry.warnings || []).join("；"),
+    };
+  });
+}
+
+function exportRosterSummaryRows() {
+  return buildRosterRows(state.comparison?.rows || []).map((row) => ({
+    staff: row.staff,
+    days: row.days,
+    hours: formatRosterHours(row.hours),
+    normalDays: row.normalDays,
+    normalHours: formatRosterHours(row.normalHours),
+    publicHolidayDays: row.publicHolidayDays,
+    publicHolidayHours: formatRosterHours(row.publicHolidayHours),
+    actualHours: formatRosterHours(row.actualHours),
+    actualDiff: formatSignedRosterHours(row.actualDiff),
+    issues: row.issues,
+    schedule: row.logs.map((log) => `${log.day || "-"} ${log.code || "-"}`).join("；"),
+  }));
+}
+
+function exportCompareRows() {
+  return (state.comparison?.rows || []).map((row) => ({
+    date: row.date || "",
+    staff_name: row.staff_name || "",
+    ocr_name: row.ocr_name || "",
+    confidence: formatConfidenceScore(row),
+    shift_code: row.shift_code || row.raw_shift_code || "",
+    scheduled_in: row.scheduled_in || "",
+    scheduled_out: row.scheduled_out || "",
+    actual_in: row.actual_in || "",
+    actual_out: row.actual_out || "",
+    raw_late_minutes: displayMinutes(row.raw_late_minutes),
+    late_minutes: displayMinutes(row.late_minutes),
+    early_leave_minutes: displayMinutes(row.early_leave_minutes),
+    status: comparisonStatusLabelForRow(row),
+    flags: formatComparisonFlags(row.flags || []),
+    source_filename: sourceFilenamesForRow(row).join("；"),
+    notes: row.notes || "",
+  }));
+}
+
+function exportShiftTimeRows() {
+  return Object.entries(state.schedule?.shift_times || {}).map(([code, shift]) => ({
+    code,
+    start: shift.start || "",
+    end: shift.end || "",
+    hours: shift.hours ?? "",
+    applies_to: shift.applies_to || "",
+    specific_dates: (shift.specific_dates || []).join("；"),
+    source: shift.source || "",
+    cell: shift.cell || shift.coordinate || "",
+  }));
+}
+
+function exportCellKey(rowIndex, columnKey) {
+  return `${rowIndex}:${columnKey}`;
+}
+
+function exportCellText(value) {
+  if (Array.isArray(value)) return value.join("；");
+  if (value && typeof value === "object") return compactJson(value);
+  return value ?? "";
+}
+
+function tsvCell(value) {
+  return String(value ?? "").replace(/\r?\n/g, " ").replace(/\t/g, " ");
+}
+
+function uniqueSorted(values) {
+  return [...new Set(values)].filter((value) => Number.isFinite(value)).sort((left, right) => left - right);
+}
+
 async function copyJson() {
   if (!state.schedule) {
     setStatus("沒有可複製的 JSON。", true);
@@ -3245,6 +3676,7 @@ function refreshAfterReview(message) {
   renderSummary(state.response?.summary || {});
   renderEntries();
   els.rawJson.textContent = pretty(state.schedule);
+  renderExportTable();
   refreshRosterComparison();
   updateWorkflowState();
   setStatus(message);

@@ -863,6 +863,116 @@ h3 {
   margin-top: 12px;
 }
 
+.export-table-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.export-table-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.export-table-tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.export-table-tools label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-strong);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.export-table-tools select {
+  min-height: 32px;
+  max-width: 220px;
+  padding: 5px 8px;
+  font-size: 12px;
+}
+
+.export-table-wrap {
+  max-height: 520px;
+}
+
+.export-table {
+  min-width: 1120px;
+  table-layout: fixed;
+  user-select: text;
+}
+
+.export-table th,
+.export-table td {
+  padding: 5px 7px;
+  font-size: 11.5px;
+  line-height: 1.25;
+  vertical-align: middle;
+}
+
+.export-table td {
+  overflow: hidden;
+  max-width: 220px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.export-row-head {
+  width: 42px;
+  text-align: center;
+}
+
+.export-row-selector,
+.export-column-selector {
+  min-height: 24px;
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.export-row-selector:hover,
+.export-column-selector:hover {
+  border-color: #84caff;
+  background: #eff8ff;
+  color: #175cd3;
+}
+
+.export-row-selector.is-selected,
+.export-table tr.is-selected-row .export-row-selector,
+.export-table th.is-selected-column .export-column-selector {
+  border-color: #2e90fa;
+  background: #d1e9ff;
+  color: #175cd3;
+}
+
+.export-table tr.is-selected-row td,
+.export-cell.is-selected-row {
+  background: #f0f9ff;
+}
+
+.export-cell.is-selected-column {
+  background: #eef4ff;
+}
+
+.export-cell.is-selected-cell {
+  outline: 2px solid #2e90fa;
+  outline-offset: -2px;
+  background: #d1e9ff;
+  color: #0b4a6f;
+}
+
 .roster-panel {
   margin-bottom: 0;
 }
@@ -1617,6 +1727,13 @@ h3 {
   font-weight: 700;
   text-align: right;
   font-variant-numeric: tabular-nums;
+  appearance: textfield;
+}
+
+.summary-override-input::-webkit-outer-spin-button,
+.summary-override-input::-webkit-inner-spin-button {
+  margin: 0;
+  -webkit-appearance: none;
 }
 
 .summary-override-input:focus {

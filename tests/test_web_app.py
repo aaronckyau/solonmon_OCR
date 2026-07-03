@@ -44,6 +44,11 @@ def test_index_renders_upload_page():
     assert "讀取排班表" in body
     assert "確認排班表" in body
     assert "下載修正 JSON" in body
+    assert "Excel 貼上表格" in body
+    assert "exportTableDatasetSelect" in body
+    assert "copyExportTableSelectionButton" in body
+    assert "copyExportTableAllButton" in body
+    assert "clearExportTableSelectionButton" in body
     assert "打卡紙 OCR" in body
     assert "OCR 全部檔案" in body
     assert "複製 OCR JSON" not in body
@@ -115,6 +120,8 @@ def test_schedule_summary_days_and_hours_can_be_manually_overridden():
     assert "<small>Days</small>" in script
     assert "<small>Hours</small>" in script
     assert ".summary-override-input" in styles
+    assert ".summary-override-input::-webkit-inner-spin-button" in styles
+    assert "appearance: textfield" in styles
 
 
 def test_roster_summary_splits_holiday_columns_and_uses_compact_chips():
@@ -138,6 +145,28 @@ def test_roster_summary_splits_holiday_columns_and_uses_compact_chips():
     assert ".roster-metric-cell.is-ph" in styles
     assert "min-height: 20px" in styles
     assert "font-size: 11px" in styles
+
+
+def test_export_json_step_has_excel_copyable_table_selection():
+    root = Path(__file__).parents[1]
+    body = (root / "schedule_parser" / "templates" / "parser_index.html").read_text(encoding="utf-8")
+    script = (root / "schedule_parser" / "static" / "parser_app.js").read_text(encoding="utf-8")
+    styles = (root / "schedule_parser" / "static" / "parser_styles.css").read_text(encoding="utf-8")
+
+    assert "Excel 貼上表格" in body
+    assert "exportTableHead" in body
+    assert "exportTableBody" in body
+    assert "exportTableIncludeHeadersInput" in body
+    assert "function renderExportTable" in script
+    assert "function copyExportTableSelection" in script
+    assert "function exportTableToTsv" in script
+    assert "function exportScheduleEntryRows" in script
+    assert "data-export-column" in script
+    assert "data-export-row" in script
+    assert "navigator.clipboard.writeText(tsv)" in script
+    assert ".export-cell.is-selected-cell" in styles
+    assert ".export-table tr.is-selected-row" in styles
+    assert ".export-table th.is-selected-column" in styles
 
 
 def test_actual_time_exceptions_use_warning_visuals():
