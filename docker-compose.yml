@@ -1,0 +1,18 @@
+services:
+  solomonscan:
+    build: .
+    container_name: solomonscan
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5421:5421"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      SCHEDULE_PARSER_HOST: "0.0.0.0"
+      SCHEDULE_PARSER_PORT: "5421"
+      SCHEDULE_PARSER_DEBUG: "0"
+    volumes:
+      - ./runtime:/app/runtime
+      - ./uploads:/app/uploads
+      - ./exports:/app/exports

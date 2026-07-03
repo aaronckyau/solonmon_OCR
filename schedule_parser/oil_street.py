@@ -37,6 +37,7 @@ from .time_utils import coerce_excel_date
 
 SUMMARY_HEADERS = {
     "days",
+    "total hours",
     "normal days total hours",
     "normal total hours",
     "deduct hours",
@@ -50,6 +51,7 @@ SUMMARY_HEADERS = {
 }
 
 STAFF_STOP_MARKERS = {"need", "total", "briefing", "still need"}
+MAX_DATE_COLUMNS = 370
 
 
 def parse_oil_street_schedule(
@@ -189,7 +191,7 @@ def _extract_date_columns(ws_formula, ws_values, header_row: int, layout_type: s
         formula_value = ws_formula.cell(header_row, col).value
         cached_value = ws_values.cell(header_row, col).value
         header_label = normalize_label(cached_value if cached_value is not None else formula_value)
-        if columns and header_label in SUMMARY_HEADERS:
+        if columns and _is_summary_header(header_label):
             break
 
         cached_date = coerce_excel_date(cached_value)
@@ -224,9 +226,15 @@ def _extract_date_columns(ws_formula, ws_values, header_row: int, layout_type: s
         )
         last_date = parsed_date
         last_col = col
-        if len(columns) >= 31:
+        if len(columns) >= MAX_DATE_COLUMNS:
             break
     return columns
+
+
+def _is_summary_header(label: str) -> bool:
+    if label in SUMMARY_HEADERS:
+        return True
+    return any(label.startswith(f"{header} ") or label.startswith(f"{header} (") for header in SUMMARY_HEADERS)
 
 
 def _extract_staff(ws_values, header_row: int, header_cols: dict[str, int]) -> list[ParsedStaff]:

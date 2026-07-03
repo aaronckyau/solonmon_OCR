@@ -71,11 +71,99 @@ const SCHEDULE_SUMMARY_OVERRIDE_FIELDS = new Set([
   "publicHolidayDays",
   "publicHolidayHours",
 ]);
+const ALL_SCHEDULE_VARIANT_KEY = "__all__";
+const DEFAULT_PROJECT_PROFILE = "oil_street";
+const DEFAULT_EXPORT_TABLE_DATASET = "compare_rows";
+const WORKFLOW_STEP_ORDER = ["project-select", "schedule-upload", "check-schedule", "log-upload", "manage-schedule", "export"];
+const API_BASE_PATH = (document.body?.dataset.apiBase || "").replace(/\/+$/, "");
+const PROJECT_PROFILES = {
+  oil_street: {
+    id: "oil_street",
+    name: "Oil Street",
+    eyebrow: "Oil Street 排班優先 OCR",
+    title: "Oil Street 排班工作台",
+    logSheetShortName: "打卡紙",
+    logStepLabel: "3 上傳打卡紙",
+    scheduleStepNote: "Excel 是排班資料的主要來源。讀取後會進入檢查排班，先確認班次時間再 OCR 打卡紙。",
+    ocrTitle: "打卡紙 OCR",
+    ocrIntro: "使用 OpenRouter Qwen3.6 35B A3B 辨識打卡紙圖片或 PDF，輸出每日首次上班 / 最後下班表格。",
+    logUploadLabel: "上傳 logsheet 圖片 / PDF",
+    ocrPromptPlaceholder: "可選：補充月份年份，例如 August 2025；或補充欄位規則。",
+    ocrButtonLabel: "OCR 全部檔案",
+    compareTitle: "排班 vs 打卡紙核對",
+    sourceSidebarAriaLabel: "打卡紙來源文件",
+    assignmentEmptyText: "上傳打卡紙後，可在這裡把檔案指派到正確員工。",
+    detailPreviewLabel: "打卡紙預覽",
+    detailPrevAriaLabel: "上一張打卡紙",
+    detailNextAriaLabel: "下一張打卡紙",
+    detailImageAlt: "員工打卡紙",
+    detailEmptyText: "這位員工沒有可預覽的打卡紙圖片。",
+    noFileMessage: "請先選擇打卡紙圖片或 PDF。",
+    compareDoneMessage: "排班與打卡紙已重新核對。",
+    waitingActualMessage: "已解析排班表，等待 OCR 打卡資料。",
+    missingLogsheetLabel: "缺打卡紙",
+  },
+  heritage: {
+    id: "heritage",
+    name: "Heritage",
+    eyebrow: "Heritage 排班優先 OCR",
+    title: "Heritage 排班工作台",
+    logSheetShortName: "Heritage log sheet",
+    logStepLabel: "3 上傳 log sheet",
+    scheduleStepNote: "Excel 是排班資料的主要來源。讀取後會進入檢查排班，先確認班次時間再 OCR Heritage log sheet / 簽到表。",
+    ocrTitle: "Heritage log sheet OCR",
+    ocrIntro: "使用 OpenRouter Qwen3.6 35B A3B 辨識 Heritage REGISTER FOR EXHIBITION HELPERS 簽到 / 簽出 PDF，輸出每日首次上班 / 最後下班表格。",
+    logUploadLabel: "上傳 Heritage log sheet / 簽到表 PDF",
+    ocrPromptPlaceholder: "可選：補充月份年份，例如 May 2026；或補充 Heritage sign-in sheet 欄位規則。",
+    ocrButtonLabel: "OCR log sheet",
+    compareTitle: "排班 vs Heritage log sheet 核對",
+    sourceSidebarAriaLabel: "Heritage log sheet 來源文件",
+    assignmentEmptyText: "上傳 Heritage log sheet 後，可在這裡把檔案指派到正確員工。",
+    detailPreviewLabel: "Log sheet 預覽",
+    detailPrevAriaLabel: "上一張 log sheet",
+    detailNextAriaLabel: "下一張 log sheet",
+    detailImageAlt: "員工 log sheet",
+    detailEmptyText: "這位員工沒有可預覽的 log sheet 圖片。",
+    noFileMessage: "請先選擇 Heritage log sheet PDF 或圖片。",
+    compareDoneMessage: "排班與 Heritage log sheet 已重新核對。",
+    waitingActualMessage: "已解析排班表，等待 OCR log sheet 資料。",
+    missingLogsheetLabel: "缺 log sheet",
+  },
+  d_and_g: {
+    id: "d_and_g",
+    name: "D&G",
+    eyebrow: "D&G 排班優先 OCR",
+    title: "D&G 排班工作台",
+    logSheetShortName: "D&G 工作紀錄",
+    logStepLabel: "3 上傳工作紀錄",
+    scheduleStepNote: "Excel 是 D&G Job Applications 排班資料來源。讀取後會進入檢查排班，先確認跨月份日期與時間再 OCR 工作紀錄相片。",
+    ocrTitle: "D&G 工作紀錄 OCR",
+    ocrIntro: "使用 OpenRouter Qwen3.6 35B A3B 辨識 D&G 促銷員工作紀錄相片，支援一張相片內有多張表格。",
+    logUploadLabel: "上傳 D&G 工作紀錄圖片 / PDF",
+    ocrPromptPlaceholder: "可選：補充月份年份，例如 April 2026；或說明相片內日期範圍。",
+    ocrButtonLabel: "OCR 工作紀錄",
+    compareTitle: "排班 vs D&G 工作紀錄核對",
+    sourceSidebarAriaLabel: "D&G 工作紀錄來源文件",
+    assignmentEmptyText: "上傳 D&G 工作紀錄後，可在這裡把檔案指派到正確員工。",
+    detailPreviewLabel: "工作紀錄預覽",
+    detailPrevAriaLabel: "上一張工作紀錄",
+    detailNextAriaLabel: "下一張工作紀錄",
+    detailImageAlt: "員工工作紀錄",
+    detailEmptyText: "這位員工沒有可預覽的工作紀錄圖片。",
+    noFileMessage: "請先選擇 D&G 工作紀錄圖片或 PDF。",
+    compareDoneMessage: "排班與 D&G 工作紀錄已重新核對。",
+    waitingActualMessage: "已解析排班表，等待 OCR 工作紀錄資料。",
+    missingLogsheetLabel: "缺工作紀錄",
+  },
+};
 
 const state = {
+  projectProfile: DEFAULT_PROJECT_PROFILE,
   response: null,
   schedule: null,
   originalSchedule: null,
+  scheduleVariants: [],
+  selectedScheduleVariantKey: "",
   entries: [],
   ocr: null,
   comparison: null,
@@ -90,7 +178,7 @@ const state = {
   officialHolidayYear: DEFAULT_GOVHK_HOLIDAY_YEAR,
   customHolidays: [],
   customHolidaySource: "",
-  currentStep: "schedule-upload",
+  currentStep: "project-select",
   scheduleConfirmed: false,
   selectedRosterStaff: "",
   logsheetFiles: [],
@@ -99,7 +187,8 @@ const state = {
   rosterImageFileName: "",
   rosterImageIndex: 0,
   rosterIssuesExpanded: false,
-  exportTableDataset: "schedule_entries",
+  exportTableDataset: DEFAULT_EXPORT_TABLE_DATASET,
+  exportTableUserSelected: false,
   exportTableSelection: {
     rows: new Set(),
     columns: new Set(),
@@ -110,6 +199,11 @@ const state = {
 let comparisonRequestId = 0;
 
 const els = {
+  projectCards: [...document.querySelectorAll("[data-project-profile]")],
+  projectCopyTargets: [...document.querySelectorAll("[data-project-copy]")],
+  projectPlaceholderTargets: [...document.querySelectorAll("[data-project-placeholder]")],
+  projectAriaTargets: [...document.querySelectorAll("[data-project-aria-label]")],
+  projectAltTargets: [...document.querySelectorAll("[data-project-alt]")],
   file: document.getElementById("scheduleFile"),
   logsheetFile: document.getElementById("logsheetFile"),
   parse: document.getElementById("parseButton"),
@@ -145,6 +239,9 @@ const els = {
   summary: document.getElementById("summarySection"),
   messagesSection: document.getElementById("messagesSection"),
   messages: document.getElementById("messagesList"),
+  scheduleVariantSection: document.getElementById("scheduleVariantSection"),
+  scheduleVariantSelect: document.getElementById("scheduleVariantSelect"),
+  scheduleVariantStatus: document.getElementById("scheduleVariantStatus"),
   dateColumns: document.getElementById("dateColumnsBody"),
   staff: document.getElementById("staffBody"),
   shiftTimes: document.getElementById("shiftTimesBody"),
@@ -207,6 +304,9 @@ els.ocr.addEventListener("click", ocrSelectedLogsheet);
 els.logsheetFile?.addEventListener("change", handleLogsheetFileSelectionChange);
 els.clear.addEventListener("click", clearPage);
 els.confirmSchedule.addEventListener("click", confirmSchedule);
+els.projectCards.forEach((button) => {
+  button.addEventListener("click", () => selectProjectProfile(button.dataset.projectProfile));
+});
 els.workflowSteps.forEach((button) => {
   button.addEventListener("click", () => setWorkflowStep(button.dataset.workflowStep));
 });
@@ -218,6 +318,7 @@ els.holidaySunday?.addEventListener("change", handleHolidayOptionsChange);
 els.holidayOfficial?.addEventListener("change", handleHolidayOptionsChange);
 els.holidayOfficialYear?.addEventListener("change", handleHolidayOptionsChange);
 els.holidayUpload?.addEventListener("change", handleHolidayUploadChange);
+els.scheduleVariantSelect?.addEventListener("change", handleScheduleVariantChange);
 els.entries.addEventListener("click", handleEntryReviewClick);
 els.entries.addEventListener("change", handleScheduleSummaryOverrideChange);
 els.resetReview.addEventListener("click", resetReview);
@@ -265,9 +366,91 @@ els.rosterDetailImageStage?.addEventListener("pointermove", handleRosterImagePoi
 els.rosterDetailImageStage?.addEventListener("pointerup", endRosterImageDrag);
 els.rosterDetailImageStage?.addEventListener("pointercancel", endRosterImageDrag);
 els.rosterDetailImageStage?.addEventListener("dblclick", resetRosterImageView);
+applyProjectProfileCopy();
 renderHolidayStatus();
 renderLogsheetAssignments();
 updateWorkflowState();
+
+function apiUrl(path) {
+  const cleanPath = String(path || "").replace(/^\/+/, "");
+  return API_BASE_PATH ? `${API_BASE_PATH}/${cleanPath}` : `/${cleanPath}`;
+}
+
+async function readApiJson(response, fallbackMessage) {
+  const text = await response.text();
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    return {
+      ok: false,
+      error: fallbackMessage || `API returned a non-JSON response (${response.status}).`,
+    };
+  }
+}
+
+function apiErrorMessage(error, endpoint) {
+  const message = error?.message || String(error);
+  if (/failed to fetch|networkerror|load failed/i.test(message)) {
+    if (window.location.protocol === "file:") {
+      return "無法連線到後端 API：請用 Flask 網址開啟此頁，不要直接打開 HTML 檔。";
+    }
+    return `無法連線到後端 API（${apiUrl(endpoint)}）。請確認目前頁面由同一個 Flask server 開啟，並重新整理頁面。`;
+  }
+  return message;
+}
+
+function currentProjectProfile() {
+  return PROJECT_PROFILES[state.projectProfile] || PROJECT_PROFILES[DEFAULT_PROJECT_PROFILE];
+}
+
+function selectProjectProfile(profileId) {
+  const nextProfileId = PROJECT_PROFILES[profileId] ? profileId : DEFAULT_PROJECT_PROFILE;
+  state.projectProfile = nextProfileId;
+  applyProjectProfileCopy();
+  renderLogsheetAssignments();
+  updateWorkflowState();
+  setWorkflowStep("schedule-upload");
+  setStatus(`${currentProjectProfile().name} 已選擇。`);
+}
+
+function applyProjectProfileCopy() {
+  const profile = currentProjectProfile();
+  document.title = profile.title;
+  els.projectCopyTargets.forEach((node) => {
+    const key = node.dataset.projectCopy;
+    if (key && Object.hasOwn(profile, key)) {
+      node.textContent = profile[key];
+    }
+  });
+  els.projectPlaceholderTargets.forEach((node) => {
+    const key = node.dataset.projectPlaceholder;
+    if (key && Object.hasOwn(profile, key)) {
+      node.setAttribute("placeholder", profile[key]);
+    }
+  });
+  els.projectAriaTargets.forEach((node) => {
+    const key = node.dataset.projectAriaLabel;
+    if (key && Object.hasOwn(profile, key)) {
+      node.setAttribute("aria-label", profile[key]);
+    }
+  });
+  els.projectAltTargets.forEach((node) => {
+    const key = node.dataset.projectAlt;
+    if (key && Object.hasOwn(profile, key)) {
+      node.setAttribute("alt", profile[key]);
+    }
+  });
+  updateProjectProfileCards();
+}
+
+function updateProjectProfileCards() {
+  els.projectCards.forEach((button) => {
+    const isSelected = button.dataset.projectProfile === state.projectProfile;
+    button.classList.toggle("is-selected", isSelected);
+    button.setAttribute("aria-pressed", isSelected ? "true" : "false");
+  });
+}
 
 function setStatus(message, isError = false) {
   els.status.textContent = message;
@@ -284,6 +467,7 @@ function setWorkflowStep(step) {
 }
 
 function canVisitStep(step) {
+  if (step === "project-select") return true;
   if (step === "schedule-upload") return true;
   if (step === "check-schedule") return Boolean(state.schedule);
   if (step === "log-upload") return Boolean(state.schedule && state.scheduleConfirmed);
@@ -295,7 +479,7 @@ function canVisitStep(step) {
 function workflowBlockedMessage(step) {
   if (step === "check-schedule") return "請先上傳並讀取排班 Excel。";
   if (step === "log-upload") return "請先在檢查排班確認排班表。";
-  if (step === "manage-schedule") return "請先完成打卡紙 OCR。";
+  if (step === "manage-schedule") return `請先完成${currentProjectProfile().logSheetShortName} OCR。`;
   if (step === "export") return "請先讀取排班 Excel。";
   return "目前不能進入這一步。";
 }
@@ -318,7 +502,8 @@ function updateWorkflowState() {
     }
   });
   if (els.workflowProgressFill) {
-    const percent = Math.max(0, Math.min(100, (stepIndex / 4) * 100));
+    const maxIndex = Math.max(WORKFLOW_STEP_ORDER.length - 1, 1);
+    const percent = Math.max(0, Math.min(100, (stepIndex / maxIndex) * 100));
     els.workflowProgressFill.style.width = `${percent}%`;
   }
   if (els.workflowHint) {
@@ -333,16 +518,17 @@ function updateWorkflowState() {
 }
 
 function workflowStepIndex(step) {
-  const order = ["schedule-upload", "check-schedule", "log-upload", "manage-schedule", "export"];
-  return Math.max(0, order.indexOf(step));
+  return Math.max(0, WORKFLOW_STEP_ORDER.indexOf(step));
 }
 
 function workflowHintText() {
-  if (!state.schedule) return "先上傳 Oil Street Excel 排班表。";
+  const profile = currentProjectProfile();
+  if (state.currentStep === "project-select") return "選擇 Oil Street、Heritage 或 D&G，然後上傳排班表。";
+  if (!state.schedule) return `先上傳 ${profile.name} Excel 排班表。`;
   if (!state.scheduleConfirmed) return "檢查班次時間和未解析項目，確認後再 OCR。";
-  if (!ocrRows().length) return "排班表已確認，可以上傳打卡紙並執行 OCR 全部檔案。";
+  if (!ocrRows().length) return `排班表已確認，可以上傳${profile.logSheetShortName}並執行 OCR。`;
   if (!state.comparison) return "OCR 已有資料，可以重新核對排班。";
-  return "已完成核對，可下載 JSON 或繼續修正。";
+  return "已完成核對，可匯出或繼續修正。";
 }
 
 function confirmSchedule() {
@@ -353,7 +539,7 @@ function confirmSchedule() {
   state.scheduleConfirmed = true;
   updateWorkflowState();
   setWorkflowStep("log-upload");
-  setStatus("排班表已確認，請上傳打卡紙。");
+  setStatus(`排班表已確認，請上傳${currentProjectProfile().logSheetShortName}。`);
 }
 
 async function parseSelectedFile() {
@@ -364,18 +550,19 @@ async function parseSelectedFile() {
   }
   const form = new FormData();
   form.append("schedule", file);
+  form.append("project_profile", state.projectProfile);
   setStatus("解析中...");
   els.parse.disabled = true;
   try {
-    const response = await fetch("/api/parse", { method: "POST", body: form });
-    const payload = await response.json();
+    const response = await fetch(apiUrl("/api/parse"), { method: "POST", body: form });
+    const payload = await readApiJson(response, "讀取排班表失敗：API 回傳格式不正確。");
     if (!response.ok || !payload.ok) {
       throw new Error(payload.error || "解析失敗。");
     }
     state.response = payload;
-    state.schedule = payload.schedule;
-    state.originalSchedule = deepClone(payload.schedule);
-    state.entries = payload.schedule.entries || [];
+    state.scheduleVariants = normalizeScheduleVariants(payload);
+    const selectedVariant = selectedScheduleVariant(payload.selected_schedule_key) || state.scheduleVariants[0];
+    applyScheduleVariant(selectedVariant, { resetReviewState: false });
     state.officialHolidayYear = inferScheduleHolidayYear() || state.officialHolidayYear;
     state.scheduleConfirmed = false;
     state.comparison = null;
@@ -384,7 +571,7 @@ async function parseSelectedFile() {
     setWorkflowStep("check-schedule");
     setStatus("排班表已讀取，請檢查班次時間後確認。");
   } catch (error) {
-    setStatus(error.message || String(error), true);
+    setStatus(apiErrorMessage(error, "/api/parse"), true);
   } finally {
     els.parse.disabled = false;
   }
@@ -398,7 +585,7 @@ async function ocrSelectedLogsheet() {
   }
   const files = Array.from(els.logsheetFile.files || []);
   if (!files.length) {
-    setStatus("請先選擇打卡紙圖片或 PDF。", true);
+    setStatus(currentProjectProfile().noFileMessage, true);
     return;
   }
   rememberLogsheetFiles(files);
@@ -449,6 +636,130 @@ async function ocrSelectedLogsheet() {
   }
 }
 
+function normalizeScheduleVariants(payload) {
+  const variants = Array.isArray(payload.schedule_variants) ? payload.schedule_variants : [];
+  const allVariant = payload.schedule ? {
+    key: ALL_SCHEDULE_VARIANT_KEY,
+    label: "全部月份",
+    month: "",
+    isAllMonths: true,
+    summary: payload.summary || scheduleSummaryFromSchedule(payload.schedule),
+    schedule: payload.schedule,
+  } : null;
+  if (variants.length) {
+    const monthVariants = variants
+      .filter((variant) => variant && variant.schedule)
+      .map((variant, index) => ({
+        key: String(variant.key || variant.month || `variant-${index + 1}`),
+        label: String(variant.label || variant.month || `月份 ${index + 1}`),
+        month: String(variant.month || ""),
+        summary: variant.summary || scheduleSummaryFromSchedule(variant.schedule),
+        schedule: variant.schedule,
+      }));
+    return allVariant ? [allVariant, ...monthVariants] : monthVariants;
+  }
+  return [{
+    key: String(payload.schedule?.schedule_month || payload.schedule?.sheet_name || "schedule"),
+    label: String(payload.schedule?.schedule_month_label || payload.schedule?.sheet_name || "排班表"),
+    month: String(payload.schedule?.schedule_month || ""),
+    summary: payload.summary || scheduleSummaryFromSchedule(payload.schedule),
+    schedule: payload.schedule,
+  }];
+}
+
+function selectedScheduleVariant(key) {
+  if (!state.scheduleVariants.length) return null;
+  return state.scheduleVariants.find((variant) => variant.key === key) || null;
+}
+
+function scheduleMonthKeyFromDate(date) {
+  const text = String(date || "");
+  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text.slice(0, 7) : "";
+}
+
+function scheduleMonthLabel(month) {
+  const match = /^(\d{4})-(\d{2})$/.exec(String(month || ""));
+  if (!match) return String(month || "");
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, 1);
+  return date.toLocaleString("en", { month: "long", year: "numeric" });
+}
+
+function scheduleMonthField(month, metric) {
+  return `month:${month}:${metric}`;
+}
+
+function isScheduleSummaryMonthField(field) {
+  return /^month:\d{4}-\d{2}:(days|hours)$/.test(String(field || ""));
+}
+
+function scheduleSummaryMonthMetric(field) {
+  const match = /^month:\d{4}-\d{2}:(days|hours)$/.exec(String(field || ""));
+  return match ? match[1] : "";
+}
+
+function scheduleMonthColumnsFromRows(rows) {
+  const months = new Map();
+  rows.forEach((row) => {
+    (row.scheduleMonths || []).forEach((month) => {
+      if (month?.month && !months.has(month.month)) {
+        months.set(month.month, {
+          month: month.month,
+          label: month.label || scheduleMonthLabel(month.month),
+          daysField: month.daysField,
+          hoursField: month.hoursField,
+        });
+      }
+    });
+  });
+  return [...months.values()].sort((left, right) => left.month.localeCompare(right.month));
+}
+
+function applyScheduleVariant(variant, options = {}) {
+  if (!variant?.schedule) return;
+  state.selectedScheduleVariantKey = variant.key;
+  state.schedule = deepClone(variant.schedule);
+  state.originalSchedule = deepClone(variant.schedule);
+  state.entries = state.schedule.entries || [];
+  state.response = {
+    ...(state.response || {}),
+    schedule: state.schedule,
+    summary: variant.summary || scheduleSummaryFromSchedule(state.schedule),
+    selected_schedule_key: variant.key,
+  };
+  if (options.resetReviewState !== false) {
+    state.scheduleConfirmed = false;
+    state.comparison = null;
+    clearComparison(currentProjectProfile().waitingActualMessage);
+    setWorkflowStep("check-schedule");
+    setStatus(`已切換至 ${variant.label}，請重新確認排班表。`);
+  }
+}
+
+function scheduleSummaryFromSchedule(schedule) {
+  const diagnostics = schedule?.diagnostics && typeof schedule.diagnostics === "object" ? schedule.diagnostics : {};
+  return {
+    source_filename: schedule?.source_filename || "",
+    sheet_name: schedule?.sheet_name || "",
+    schedule_month: schedule?.schedule_month || "",
+    schedule_month_label: schedule?.schedule_month_label || "",
+    layout_type: schedule?.layout_type || "",
+    header_row: schedule?.header_row,
+    date_count: (schedule?.date_columns || []).length,
+    staff_count: (schedule?.staff || []).length,
+    entry_count: (schedule?.entries || []).length,
+    shift_time_count: Object.keys(schedule?.shift_times || {}).length,
+    warning_count: diagnostics.warning_count ?? (schedule?.warnings || []).length,
+    error_count: diagnostics.error_count ?? (schedule?.errors || []).length,
+  };
+}
+
+function handleScheduleVariantChange() {
+  const variant = selectedScheduleVariant(els.scheduleVariantSelect?.value || "");
+  if (!variant) return;
+  applyScheduleVariant(variant);
+  renderAll();
+}
+
 function handleLogsheetFileSelectionChange() {
   const files = Array.from(els.logsheetFile?.files || []);
   rememberLogsheetFiles(files);
@@ -458,16 +769,21 @@ function handleLogsheetFileSelectionChange() {
 async function ocrSingleFile(file, extraPrompt) {
   const form = new FormData();
   form.append("logsheet", file);
+  form.append("project_profile", state.projectProfile);
   if (extraPrompt) {
     form.append("prompt", extraPrompt);
   }
   form.append("enhance_image", els.ocrEnhanceImage?.checked === false ? "0" : "1");
-  const response = await fetch("/api/ocr-logsheet", { method: "POST", body: form });
-  const payload = await response.json();
-  if (!response.ok || !payload.ok) {
-    throw new Error(payload.error || "OCR 失敗。");
+  try {
+    const response = await fetch(apiUrl("/api/ocr-logsheet"), { method: "POST", body: form });
+    const payload = await readApiJson(response, "OCR 失敗：API 回傳格式不正確。");
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.error || "OCR 失敗。");
+    }
+    return payload.ocr;
+  } catch (error) {
+    throw new Error(apiErrorMessage(error, "/api/ocr-logsheet"));
   }
-  return payload.ocr;
 }
 
 function rememberLogsheetFiles(files) {
@@ -491,13 +807,14 @@ function isPreviewableLogsheetImage(file) {
 
 function renderLogsheetAssignments() {
   if (!els.logsheetAssignmentList) return;
+  const profile = currentProjectProfile();
   const files = state.logsheetFiles || [];
   const assignedCount = files.filter((file) => file.assignedStaff).length;
   if (els.logsheetAssignmentSummary) {
     els.logsheetAssignmentSummary.textContent = `${files.length} sheets${assignedCount ? ` / ${assignedCount} assigned` : ""}`;
   }
   if (!files.length) {
-    els.logsheetAssignmentList.innerHTML = '<div class="logsheet-empty">上傳打卡紙後，可在這裡把檔案指派到正確員工。</div>';
+    els.logsheetAssignmentList.innerHTML = `<div class="logsheet-empty">${escapeHtml(profile.assignmentEmptyText)}</div>`;
     return;
   }
   const staffOptions = staffAssignmentOptions();
@@ -646,6 +963,8 @@ function clearPage() {
   state.response = null;
   state.schedule = null;
   state.originalSchedule = null;
+  state.scheduleVariants = [];
+  state.selectedScheduleVariantKey = "";
   state.entries = [];
   state.ocr = null;
   state.comparison = null;
@@ -655,12 +974,13 @@ function clearPage() {
   state.earlyInGraceMinutes = DEFAULT_EARLY_IN_GRACE_MINUTES;
   state.countOvertime = false;
   state.overtimeGraceMinutes = DEFAULT_OVERTIME_GRACE_MINUTES;
-  state.currentStep = "schedule-upload";
+  state.currentStep = "project-select";
   state.scheduleConfirmed = false;
   state.selectedRosterStaff = "";
   state.logsheetFiles = [];
   state.rosterIssuesExpanded = false;
-  state.exportTableDataset = "schedule_entries";
+  state.exportTableDataset = DEFAULT_EXPORT_TABLE_DATASET;
+  state.exportTableUserSelected = false;
   resetExportTableSelection();
   els.file.value = "";
   els.logsheetFile.value = "";
@@ -688,6 +1008,7 @@ function clearPage() {
   els.summary.innerHTML = "";
   els.messages.textContent = "尚未解析排班表。";
   els.messages.className = "message-list empty";
+  renderScheduleVariantSelector();
   clearTable(els.dateColumns);
   clearTable(els.staff);
   clearTable(els.shiftTimes);
@@ -1024,7 +1345,7 @@ async function refreshRosterComparison(options = {}) {
   }
   const rows = ocrRows();
   if (!rows.length) {
-    clearComparison("已解析排班表，等待 OCR 打卡資料。");
+    clearComparison(currentProjectProfile().waitingActualMessage);
     return;
   }
 
@@ -1034,7 +1355,7 @@ async function refreshRosterComparison(options = {}) {
   els.compareStatus.classList.remove("error-text");
   els.compareStatus.textContent = "核對中...";
   try {
-    const response = await fetch("/api/compare-roster", {
+    const response = await fetch(apiUrl("/api/compare-roster"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1048,7 +1369,7 @@ async function refreshRosterComparison(options = {}) {
         overtime_grace_minutes: currentOvertimeGraceMinutes(),
       }),
     });
-    const payload = await response.json();
+    const payload = await readApiJson(response, "核對排班失敗：API 回傳格式不正確。");
     if (!response.ok || !payload.ok) {
       throw new Error(payload.error || "核對失敗。");
     }
@@ -1063,13 +1384,14 @@ async function refreshRosterComparison(options = {}) {
     syncGraceInputs();
     renderComparison(payload.comparison);
     updateWorkflowState();
-    if (options.userAction) setStatus("排班與打卡紙已重新核對。");
+    if (options.userAction) setStatus(currentProjectProfile().compareDoneMessage);
   } catch (error) {
     if (requestId !== comparisonRequestId) return;
     state.comparison = null;
-    els.compareStatus.textContent = error.message || String(error);
+    const message = apiErrorMessage(error, "/api/compare-roster");
+    els.compareStatus.textContent = message;
     els.compareStatus.classList.add("error-text");
-    if (options.userAction) setStatus(error.message || String(error), true);
+    if (options.userAction) setStatus(message, true);
   } finally {
     if (requestId === comparisonRequestId) {
       els.compareButton.disabled = false;
@@ -1133,7 +1455,7 @@ function renderComparisonSummary(summary) {
     ["早到計算", summary.count_early_in ? `${summary.early_in_grace_minutes ?? currentEarlyInGraceMinutes()} 分鐘` : "不計"],
     ["OT 計算", summary.count_overtime ? `${summary.overtime_grace_minutes ?? currentOvertimeGraceMinutes()} 分鐘` : "不計"],
     ["已配對", summary.matched_rows],
-    ["缺打卡紙", summary.missing_logsheet_rows],
+    [currentProjectProfile().missingLogsheetLabel, summary.missing_logsheet_rows],
     ["未排班打卡", summary.unscheduled_punch_rows],
     ["姓名未配對", summary.unmatched_name_rows],
     ["姓名需覆核", summary.name_check_rows],
@@ -1361,17 +1683,31 @@ function applyScheduleSummaryOverrides(row) {
   const publicHolidayDays = scheduleSummaryFieldValue(row, "publicHolidayDays");
   const publicHolidayHours = scheduleSummaryFieldValue(row, "publicHolidayHours");
   const override = scheduleSummaryOverrideForStaff(row.staff);
+  const monthFields = Object.keys(row).filter(isScheduleSummaryMonthField);
+  const monthValues = {};
+  monthFields.forEach((field) => {
+    monthValues[field] = scheduleSummaryFieldValue(row, field);
+  });
   const hasSplitDays = Object.hasOwn(override, "normalDays") || Object.hasOwn(override, "publicHolidayDays");
   const hasSplitHours = Object.hasOwn(override, "normalHours") || Object.hasOwn(override, "publicHolidayHours");
+  const monthDayFields = monthFields.filter((field) => scheduleSummaryMonthMetric(field) === "days");
+  const monthHourFields = monthFields.filter((field) => scheduleSummaryMonthMetric(field) === "hours");
+  const hasMonthDays = monthDayFields.some((field) => Object.hasOwn(override, field));
+  const hasMonthHours = monthHourFields.some((field) => Object.hasOwn(override, field));
   const days = hasSplitDays
     ? Number(normalDays || 0) + Number(publicHolidayDays || 0)
-    : scheduleSummaryFieldValue(row, "days");
+    : hasMonthDays
+      ? monthDayFields.reduce((total, field) => total + Number(monthValues[field] || 0), 0)
+      : scheduleSummaryFieldValue(row, "days");
   const hours = hasSplitHours
     ? roundHours(Number(normalHours || 0) + Number(publicHolidayHours || 0))
-    : scheduleSummaryFieldValue(row, "hours");
+    : hasMonthHours
+      ? roundHours(monthHourFields.reduce((total, field) => total + Number(monthValues[field] || 0), 0))
+      : scheduleSummaryFieldValue(row, "hours");
 
   return {
     ...row,
+    ...monthValues,
     days,
     hours,
     normalDays,
@@ -2327,7 +2663,7 @@ function rosterDetailImageEmptyText(files, sourceFileKeys) {
   if (sourceFileKeys.size) {
     return "實際時間來自 OCR JSON，但目前沒有可直接預覽的原圖；可能未重新上傳圖片，或來源是 PDF。";
   }
-  return "這位員工沒有可預覽的打卡紙圖片。";
+  return currentProjectProfile().detailEmptyText;
 }
 
 function updateRosterImageControls(files) {
@@ -2418,7 +2754,7 @@ function isComparisonIssue(row) {
 
 function comparisonStatusText(summary) {
   const issues = [
-    ["缺打卡紙", summary.missing_logsheet_rows],
+    [currentProjectProfile().missingLogsheetLabel, summary.missing_logsheet_rows],
     ["未排班打卡", summary.unscheduled_punch_rows],
     ["姓名未配對", summary.unmatched_name_rows],
     ["姓名需覆核", summary.name_check_rows],
@@ -2442,7 +2778,7 @@ function comparisonStatusLabel(status) {
     "Missing In": "缺 In",
     "Missing Out": "缺 Out",
     "Missing In/Out": "缺 In/Out",
-    "Missing Logsheet": "缺打卡紙",
+    "Missing Logsheet": currentProjectProfile().missingLogsheetLabel,
     "Unscheduled Punch": "未排班打卡",
     "Name Not Matched": "姓名未配對",
     "Date Not Matched": "日期未配對",
@@ -2687,6 +3023,7 @@ function markOcrProgressItem(filename, status, message) {
 
 function renderAll() {
   const schedule = state.schedule;
+  renderScheduleVariantSelector();
   renderSummary(state.response.summary || {});
   renderMessages(schedule.warnings || [], schedule.errors || []);
   renderDateColumns(schedule.date_columns || []);
@@ -2705,6 +3042,7 @@ function renderAll() {
 function renderSummary(summary) {
   const cards = [
     ["工作表", summary.sheet_name],
+    ...(summary.schedule_month_label ? [["月份", summary.schedule_month_label]] : []),
     ["表頭列", summary.header_row],
     ["日期數", summary.date_count],
     ["員工數", summary.staff_count],
@@ -2714,6 +3052,28 @@ function renderSummary(summary) {
   els.summary.innerHTML = cards.map(([label, value]) => (
     `<div class="summary-card"><div class="label">${escapeHtml(label)}</div><div class="value">${escapeHtml(display(value))}</div></div>`
   )).join("");
+}
+
+function renderScheduleVariantSelector() {
+  if (!els.scheduleVariantSection || !els.scheduleVariantSelect) return;
+  const variants = state.scheduleVariants || [];
+  if (variants.length <= 1) {
+    els.scheduleVariantSection.hidden = true;
+    els.scheduleVariantSelect.innerHTML = "";
+    if (els.scheduleVariantStatus) els.scheduleVariantStatus.textContent = "此排班表只有一個月份。";
+    return;
+  }
+  els.scheduleVariantSection.hidden = false;
+  els.scheduleVariantSelect.innerHTML = variants.map((variant) => (
+    `<option value="${escapeAttr(variant.key)}"${variant.key === state.selectedScheduleVariantKey ? " selected" : ""}>${escapeHtml(variant.label)}</option>`
+  )).join("");
+  if (els.scheduleVariantStatus) {
+    const selected = selectedScheduleVariant(state.selectedScheduleVariantKey);
+    const totalDates = selected?.summary?.date_count ?? (selected?.schedule?.date_columns || []).length;
+    const totalEntries = selected?.summary?.entry_count ?? (selected?.schedule?.entries || []).length;
+    const monthCount = variants.filter((variant) => variant.key !== ALL_SCHEDULE_VARIANT_KEY).length || variants.length;
+    els.scheduleVariantStatus.textContent = `這份排班表包含 ${monthCount} 個月份；目前使用 ${selected?.label || ""}，${totalDates} 天，${totalEntries} 筆排班。`;
+  }
 }
 
 function renderMessages(warnings, errors) {
@@ -2784,7 +3144,11 @@ function renderStaffFilter(staffRows) {
 }
 
 function isScheduleSummaryHoursField(field) {
-  return field === "hours" || field.endsWith("Hours");
+  return field === "hours" || field.endsWith("Hours") || scheduleSummaryMonthMetric(field) === "hours";
+}
+
+function isScheduleSummaryOverrideField(field) {
+  return SCHEDULE_SUMMARY_OVERRIDE_FIELDS.has(field) || isScheduleSummaryMonthField(field);
 }
 
 function summaryOverrideInputValue(value, field) {
@@ -2821,7 +3185,17 @@ function normalizeScheduleSummaryOverrideValue(field, value) {
 }
 
 function clearRelatedScheduleSummaryOverrides(rowOverride, field) {
-  if (field === "days") {
+  if (isScheduleSummaryMonthField(field)) {
+    if (scheduleSummaryMonthMetric(field) === "days") {
+      delete rowOverride.days;
+      delete rowOverride.normalDays;
+      delete rowOverride.publicHolidayDays;
+    } else {
+      delete rowOverride.hours;
+      delete rowOverride.normalHours;
+      delete rowOverride.publicHolidayHours;
+    }
+  } else if (field === "days") {
     delete rowOverride.normalDays;
     delete rowOverride.publicHolidayDays;
   } else if (field === "hours") {
@@ -2832,9 +3206,25 @@ function clearRelatedScheduleSummaryOverrides(rowOverride, field) {
   } else if (field === "normalHours" || field === "publicHolidayHours") {
     delete rowOverride.hours;
   }
+  const monthMetric = field === "days" || field === "normalDays" || field === "publicHolidayDays"
+    ? "days"
+    : field === "hours" || field === "normalHours" || field === "publicHolidayHours"
+      ? "hours"
+      : "";
+  if (monthMetric) {
+    Object.keys(rowOverride).forEach((key) => {
+      if (isScheduleSummaryMonthField(key) && scheduleSummaryMonthMetric(key) === monthMetric) {
+        delete rowOverride[key];
+      }
+    });
+  }
 }
 
 function scheduleSummaryFieldLabel(field) {
+  if (isScheduleSummaryMonthField(field)) {
+    const [, month, metric] = field.split(":");
+    return `${scheduleMonthLabel(month)} ${metric === "hours" ? "Hours" : "Days"}`;
+  }
   const labels = {
     days: "Days",
     hours: "Hours",
@@ -2851,7 +3241,7 @@ function handleScheduleSummaryOverrideChange(event) {
   if (!input) return;
   const staff = input.dataset.summaryStaff || "";
   const field = input.dataset.summaryField || "";
-  if (!staff || !SCHEDULE_SUMMARY_OVERRIDE_FIELDS.has(field)) return;
+  if (!staff || !isScheduleSummaryOverrideField(field)) return;
   const normalized = normalizeScheduleSummaryOverrideValue(field, input.value);
   if (normalized === null) {
     setStatus("請輸入有效的天數或時數。", true);
@@ -2906,14 +3296,24 @@ function renderEntries() {
   });
   const rosterRows = buildScheduleEntryRosterRows(filtered);
   const allRosterRows = buildScheduleEntryRosterRows(indexedEntries);
-  const splitHolidayColumns = shouldSplitHolidayColumns();
-  renderEntriesHeader(splitHolidayColumns);
+  const monthColumns = scheduleMonthColumnsFromRows(allRosterRows);
+  const splitMonthColumns = monthColumns.length > 1;
+  const splitHolidayColumns = !splitMonthColumns && shouldSplitHolidayColumns();
+  renderEntriesHeader({ splitHolidayColumns, monthColumns: splitMonthColumns ? monthColumns : [] });
   const holidayEntryCount = rosterRows.reduce((total, row) => total + row.publicHolidayCount, 0);
   const holidaySuffix = holidayEntryCount ? "，PH " + holidayEntryCount + " 筆" : "";
   els.entryCount.textContent = rosterRows.length + " / " + allRosterRows.length
     + " 位員工，" + filtered.length + " / " + state.entries.length + " 筆" + holidaySuffix;
   renderTable(els.entries, rosterRows, (row) => {
-    const summaryCells = splitHolidayColumns
+    const summaryCells = splitMonthColumns
+      ? [
+          row.staff,
+          ...monthColumns.flatMap((month) => [
+            htmlCell(renderScheduleSummaryInput(row, month.daysField, `${month.label} Days`)),
+            htmlCell(renderScheduleSummaryInput(row, month.hoursField, `${month.label} Hours`)),
+          ]),
+        ]
+      : splitHolidayColumns
       ? [
           row.staff,
           htmlCell(renderScheduleSummaryInput(row, "normalDays", "Normal day Days")),
@@ -2938,9 +3338,34 @@ function shouldSplitHolidayColumns() {
   return Boolean(state.holidayCountSunday || state.holidayUseOfficial || state.customHolidays.length);
 }
 
-function renderEntriesHeader(splitHolidayColumns) {
+function renderEntriesHeader(options = {}) {
+  const splitHolidayColumns = Boolean(options.splitHolidayColumns);
+  const monthColumns = Array.isArray(options.monthColumns) ? options.monthColumns : [];
+  const splitMonthColumns = monthColumns.length > 1;
   if (!els.entriesTableHead) return;
-  renderEntriesColumnStructure(splitHolidayColumns);
+  renderEntriesColumnStructure({ splitHolidayColumns, monthColumns });
+  if (splitMonthColumns) {
+    const monthHeaders = monthColumns.map((month) => `
+        <th class="entries-head-group is-month" colspan="2">
+          <span class="entries-head-title">${escapeHtml(month.label)}</span>
+          <span class="entries-head-subtitle">月份</span>
+        </th>
+      `).join("");
+    const metricHeaders = monthColumns.map(() => `
+        <th class="entries-metric-head"><span>天數</span><small>Days</small></th>
+        <th class="entries-metric-head"><span>預定時數</span><small>Hours</small></th>
+      `).join("");
+    els.entriesTableHead.innerHTML = `
+      <tr>
+        <th class="entries-staff-head" rowspan="2">員工</th>
+        ${monthHeaders}
+        <th class="entries-review-head" rowspan="2">需覆核</th>
+        <th class="entries-schedule-head" rowspan="2">排班日</th>
+      </tr>
+      <tr>${metricHeaders}</tr>
+    `;
+    return;
+  }
   els.entriesTableHead.innerHTML = splitHolidayColumns
     ? `
       <tr>
@@ -2974,15 +3399,32 @@ function renderEntriesHeader(splitHolidayColumns) {
     `;
 }
 
-function renderEntriesColumnStructure(splitHolidayColumns) {
+function renderEntriesColumnStructure(options = {}) {
+  const splitHolidayColumns = Boolean(options.splitHolidayColumns);
+  const monthColumns = Array.isArray(options.monthColumns) ? options.monthColumns : [];
+  const splitMonthColumns = monthColumns.length > 1;
   const table = els.entriesTableHead?.closest("table");
   if (!table) return;
-  table.classList.toggle("is-holiday-split", Boolean(splitHolidayColumns));
+  table.classList.toggle("is-holiday-split", Boolean(splitHolidayColumns) && !splitMonthColumns);
+  table.classList.toggle("is-month-split", splitMonthColumns);
   let colgroup = table.querySelector("colgroup[data-entries-columns]");
   if (!colgroup) {
     colgroup = document.createElement("colgroup");
     colgroup.dataset.entriesColumns = "true";
     table.insertBefore(colgroup, table.firstElementChild);
+  }
+  if (splitMonthColumns) {
+    const monthCols = monthColumns.map(() => `
+      <col class="entries-col-month-day">
+      <col class="entries-col-month-hours">
+    `).join("");
+    colgroup.innerHTML = `
+      <col class="entries-col-staff">
+      ${monthCols}
+      <col class="entries-col-review">
+      <col class="entries-col-schedule">
+    `;
+    return;
   }
   colgroup.innerHTML = splitHolidayColumns
     ? `
@@ -3016,6 +3458,7 @@ function buildScheduleEntryRosterRows(indexedEntries = []) {
     hours: 0,
     normalHours: 0,
     publicHolidayHours: 0,
+    months: new Map(),
     warnings: 0,
     unresolved: 0,
     reviewed: 0,
@@ -3033,8 +3476,17 @@ function buildScheduleEntryRosterRows(indexedEntries = []) {
     const status = scheduleEntryStatus(entry);
     const hours = scheduleEntryHours(entry);
     const holiday = holidayInfoForDate(date);
+    const monthKey = scheduleMonthKeyFromDate(date);
     if (date) group.dates.add(date);
     group.hours += hours;
+    if (monthKey) {
+      if (!group.months.has(monthKey)) {
+        group.months.set(monthKey, { month: monthKey, dates: new Set(), hours: 0 });
+      }
+      const monthSummary = group.months.get(monthKey);
+      if (date) monthSummary.dates.add(date);
+      monthSummary.hours += hours;
+    }
     if (holiday.isHoliday) {
       if (date) group.publicHolidayDates.add(date);
       group.publicHolidayHours += hours;
@@ -3059,15 +3511,33 @@ function buildScheduleEntryRosterRows(indexedEntries = []) {
   });
 
   return [...groups.values()]
-    .map((group) => applyScheduleSummaryOverrides({
-      ...group,
-      days: group.dates.size,
-      normalDays: group.normalDates.size,
-      publicHolidayDays: group.publicHolidayDates.size,
-      issueCount: group.unresolved + group.warnings,
-      publicHolidayCount: group.holidayEntries,
-      logs: group.logs.sort((left, right) => String(left.date).localeCompare(String(right.date))),
-    }))
+    .map((group) => {
+      const scheduleMonths = [...group.months.values()]
+        .sort((left, right) => left.month.localeCompare(right.month))
+        .map((month) => ({
+          month: month.month,
+          label: scheduleMonthLabel(month.month),
+          daysField: scheduleMonthField(month.month, "days"),
+          hoursField: scheduleMonthField(month.month, "hours"),
+        }));
+      const monthFields = {};
+      scheduleMonths.forEach((month) => {
+        const source = group.months.get(month.month);
+        monthFields[month.daysField] = source?.dates.size || 0;
+        monthFields[month.hoursField] = roundHours(source?.hours || 0);
+      });
+      return applyScheduleSummaryOverrides({
+        ...group,
+        ...monthFields,
+        scheduleMonths,
+        days: group.dates.size,
+        normalDays: group.normalDates.size,
+        publicHolidayDays: group.publicHolidayDates.size,
+        issueCount: group.unresolved + group.warnings,
+        publicHolidayCount: group.holidayEntries,
+        logs: group.logs.sort((left, right) => String(left.date).localeCompare(String(right.date))),
+      });
+    })
     .sort((left, right) => left.order - right.order || left.staff.localeCompare(right.staff));
 }
 
@@ -3163,6 +3633,31 @@ function clearExportTable() {
 function exportTableDatasets() {
   const datasets = [
     {
+      id: "compare_rows",
+      label: "核對明細",
+      columns: [
+        ["date", "日期"],
+        ["staff_name", "排班員工"],
+        ["ocr_name", "OCR 姓名"],
+        ["confidence", "信心"],
+        ["shift_code", "班次"],
+        ["scheduled_in", "預定上班"],
+        ["scheduled_out", "預定下班"],
+        ["scheduled_hours", "預定時數"],
+        ["actual_in", "實際上班"],
+        ["actual_out", "實際下班"],
+        ["actual_hours", "實際時數"],
+        ["raw_late_minutes", "原始遲到"],
+        ["late_minutes", "計算遲到"],
+        ["early_leave_minutes", "早退"],
+        ["status", "狀態"],
+        ["flags", "標記"],
+        ["notes", "備註"],
+        ["source_filename", "來源文件"],
+      ],
+      rows: exportCompareRows(),
+    },
+    {
       id: "schedule_entries",
       label: "排班資料",
       columns: [
@@ -3203,29 +3698,6 @@ function exportTableDatasets() {
       rows: exportRosterSummaryRows(),
     },
     {
-      id: "compare_rows",
-      label: "核對明細",
-      columns: [
-        ["date", "日期"],
-        ["staff_name", "員工"],
-        ["ocr_name", "OCR 姓名"],
-        ["confidence", "信心"],
-        ["shift_code", "班次"],
-        ["scheduled_in", "預定上班"],
-        ["scheduled_out", "預定下班"],
-        ["actual_in", "實際上班"],
-        ["actual_out", "實際下班"],
-        ["raw_late_minutes", "原始遲到"],
-        ["late_minutes", "計算遲到"],
-        ["early_leave_minutes", "早退"],
-        ["status", "狀態"],
-        ["flags", "標記"],
-        ["source_filename", "來源文件"],
-        ["notes", "備註"],
-      ],
-      rows: exportCompareRows(),
-    },
-    {
       id: "shift_times",
       label: "班次時間",
       columns: [
@@ -3251,8 +3723,12 @@ function renderExportTable() {
     clearExportTable();
     return;
   }
-  if (!datasets.some((dataset) => dataset.id === state.exportTableDataset)) {
-    state.exportTableDataset = datasets[0].id;
+  const defaultDataset = datasets.find((dataset) => dataset.id === DEFAULT_EXPORT_TABLE_DATASET);
+  if (!state.exportTableUserSelected && defaultDataset && state.exportTableDataset !== defaultDataset.id) {
+    state.exportTableDataset = defaultDataset.id;
+    resetExportTableSelection();
+  } else if (!datasets.some((dataset) => dataset.id === state.exportTableDataset)) {
+    state.exportTableDataset = defaultDataset?.id || datasets[0].id;
     resetExportTableSelection();
   }
   els.exportTableDataset.disabled = false;
@@ -3284,7 +3760,7 @@ function exportTableHeadHtml(table) {
       </th>
       ${table.columns.map(([key, label]) => (
         `<th class="${state.exportTableSelection.columns.has(key) ? "is-selected-column" : ""}">` +
-        `<button type="button" class="export-column-selector" data-export-column="${escapeAttr(key)}">${escapeHtml(label)}</button>` +
+        `<button type="button" class="export-column-selector" data-export-column="${escapeAttr(key)}" title="選取 ${escapeAttr(label)} 整欄" aria-label="選取 ${escapeAttr(label)} 整欄">${escapeHtml(label)}</button>` +
         `</th>`
       )).join("")}
     </tr>
@@ -3322,7 +3798,8 @@ function exportTableBodyHtml(table) {
 }
 
 function handleExportTableDatasetChange() {
-  state.exportTableDataset = els.exportTableDataset?.value || "schedule_entries";
+  state.exportTableDataset = els.exportTableDataset?.value || DEFAULT_EXPORT_TABLE_DATASET;
+  state.exportTableUserSelected = true;
   resetExportTableSelection();
   renderExportTable();
 }
@@ -3441,7 +3918,14 @@ function updateExportTableSelectionStatus() {
   const { rows, columns, cells } = state.exportTableSelection;
   const parts = [];
   if (rows.size) parts.push(`${rows.size} 列`);
-  if (columns.size) parts.push(`${columns.size} 欄`);
+  if (columns.size) {
+    const selectedColumnLabels = table.columns
+      .filter(([key]) => columns.has(key))
+      .map(([_key, label]) => label);
+    const visibleLabels = selectedColumnLabels.slice(0, 3).join("、");
+    const suffix = selectedColumnLabels.length > 3 ? ` 等 ${selectedColumnLabels.length} 欄` : "";
+    parts.push(`${columns.size} 欄${visibleLabels ? `（${visibleLabels}${suffix}）` : ""}`);
+  }
   if (cells.size) parts.push(`${cells.size} 格`);
   els.exportTableSelectionStatus.textContent = `${table.label}：${table.rows.length} 列，${table.columns.length} 欄${parts.length ? `；已選 ${parts.join("、")}` : "；未選取時會複製全部"}`;
 }
@@ -3497,8 +3981,10 @@ function exportCompareRows() {
     shift_code: row.shift_code || row.raw_shift_code || "",
     scheduled_in: row.scheduled_in || "",
     scheduled_out: row.scheduled_out || "",
+    scheduled_hours: row.has_schedule ? formatRosterHours(scheduleEntryHours(row)) : "",
     actual_in: row.actual_in || "",
     actual_out: row.actual_out || "",
+    actual_hours: row.has_actual ? formatRosterHours(actualDurationHours(row.actual_in, row.actual_out)) : "",
     raw_late_minutes: displayMinutes(row.raw_late_minutes),
     late_minutes: displayMinutes(row.late_minutes),
     early_leave_minutes: displayMinutes(row.early_leave_minutes),

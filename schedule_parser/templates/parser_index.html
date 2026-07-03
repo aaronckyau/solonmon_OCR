@@ -3,12 +3,12 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="Oil Street 排班、打卡紙 OCR 與 roster 核對工作台">
+    <meta name="description" content="Oil Street / Heritage / D&G 排班、log sheet OCR 與 roster 核對工作台">
     <meta name="theme-color" content="#1d6fd8">
     <title>Oil Street 排班工作台</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='parser_styles.css') }}">
   </head>
-  <body>
+  <body data-api-base="{{ request.script_root or '' }}">
     <a class="skip-link" href="#mainContent">跳到主要內容</a>
     <header class="topbar workbench-topbar">
       <div class="brand-block">
@@ -17,8 +17,8 @@
           <strong>HR OCR</strong>
         </div>
         <div>
-          <p class="eyebrow">Oil Street 排班優先 OCR</p>
-          <h1>Oil Street 排班工作台</h1>
+          <p id="projectEyebrow" class="eyebrow" data-project-copy="eyebrow">Oil Street 排班優先 OCR</p>
+          <h1 id="projectTitle" data-project-copy="title">Oil Street 排班工作台</h1>
         </div>
       </div>
       <div class="top-actions">
@@ -26,16 +26,17 @@
       </div>
     </header>
 
-    <section class="workflow-bar" aria-label="Oil Street process">
+    <section class="workflow-bar" aria-label="Project process">
       <div class="workflow-steps">
-        <button class="workflow-step is-active" type="button" data-workflow-step="schedule-upload" aria-current="step">1 上傳排班表</button>
+        <button class="workflow-step is-active" type="button" data-workflow-step="project-select" aria-current="step">0 選擇專案</button>
+        <button class="workflow-step" type="button" data-workflow-step="schedule-upload">1 上傳排班表</button>
         <button class="workflow-step" type="button" data-workflow-step="check-schedule" disabled>2 檢查排班</button>
-        <button class="workflow-step" type="button" data-workflow-step="log-upload" disabled>3 上傳打卡紙</button>
+        <button class="workflow-step" type="button" data-workflow-step="log-upload" data-project-copy="logStepLabel" disabled>3 上傳打卡紙</button>
         <button class="workflow-step" type="button" data-workflow-step="manage-schedule" disabled>4 核對排班</button>
-        <button class="workflow-step" type="button" data-workflow-step="export" disabled>5 匯出 JSON</button>
+        <button class="workflow-step" type="button" data-workflow-step="export" disabled>5 匯出</button>
       </div>
       <div class="workflow-tools">
-        <span id="workflowHint" class="muted">先上傳 Oil Street Excel 排班表。</span>
+        <span id="workflowHint" class="muted">選擇 Oil Street、Heritage 或 D&G，然後上傳排班表。</span>
         <div class="progress-track" aria-hidden="true">
           <span id="workflowProgressFill" class="progress-fill"></span>
         </div>
@@ -43,7 +44,34 @@
     </section>
 
     <main id="mainContent" class="shell workbench-shell">
-      <section class="panel workbench-step" data-step-panel="schedule-upload">
+      <section class="panel workbench-step project-select-step" data-step-panel="project-select">
+        <div class="step-head">
+          <div>
+            <p class="eyebrow">Step 0</p>
+            <h2>選擇專案</h2>
+          </div>
+        </div>
+        <div class="project-grid" role="list">
+          <button class="project-card is-selected" type="button" data-project-profile="oil_street" aria-pressed="true">
+            <span class="project-card-kicker">Default</span>
+            <strong>Oil Street</strong>
+            <span>Oil Street 排班 Excel，加打卡紙圖片 / PDF OCR。</span>
+          </button>
+          <button class="project-card" type="button" data-project-profile="heritage" aria-pressed="false">
+            <span class="project-card-kicker">New</span>
+            <strong>Heritage</strong>
+            <span>Heritage gallery helper sign-in sheet PDF，沿用同一套核對流程。</span>
+          </button>
+          <button class="project-card" type="button" data-project-profile="d_and_g" aria-pressed="false">
+            <span class="project-card-kicker">New</span>
+            <strong>D&G</strong>
+            <span>D&G Job Applications Excel，加促銷員工作紀錄相片 OCR。</span>
+          </button>
+        </div>
+        <p class="step-note">先選擇專案，再上傳對應月份的排班表。Heritage 會使用附件格式的 log sheet / 簽到表進行 OCR；D&G 會使用促銷員工作紀錄相片。</p>
+      </section>
+
+      <section class="panel workbench-step" data-step-panel="schedule-upload" hidden>
         <div class="step-head">
           <div>
             <p class="eyebrow">Step 1</p>
@@ -62,7 +90,7 @@
             <button id="parseButton" type="button">讀取排班表</button>
           </div>
         </div>
-        <p class="step-note">Excel 是排班資料的主要來源。讀取後會進入檢查排班，先確認班次時間再 OCR 打卡紙。</p>
+        <p class="step-note" data-project-copy="scheduleStepNote">Excel 是排班資料的主要來源。讀取後會進入檢查排班，先確認班次時間再 OCR 打卡紙。</p>
       </section>
 
       <section class="panel workbench-step" data-step-panel="check-schedule" hidden>
@@ -75,6 +103,11 @@
             <button id="confirmScheduleButton" type="button" disabled>確認排班表</button>
           </div>
         </div>
+        <section id="scheduleVariantSection" class="schedule-variant-panel" hidden>
+          <label for="scheduleVariantSelect">月份</label>
+          <select id="scheduleVariantSelect" aria-label="選擇排班月份"></select>
+          <div id="scheduleVariantStatus" class="muted">此排班表只有一個月份。</div>
+        </section>
         <section id="summarySection" class="summary-grid"></section>
         <section class="sub-panel grace-settings-panel">
           <div class="entries-header">
@@ -185,23 +218,23 @@
         <div class="ocr-header">
           <div>
             <p class="eyebrow">Step 3</p>
-            <h2>打卡紙 OCR</h2>
-            <p>使用 OpenRouter Qwen3.6 35B A3B 辨識打卡紙圖片或 PDF，輸出每日首次上班 / 最後下班表格。</p>
+            <h2 data-project-copy="ocrTitle">打卡紙 OCR</h2>
+            <p data-project-copy="ocrIntro">使用 OpenRouter Qwen3.6 35B A3B 辨識打卡紙圖片或 PDF，輸出每日首次上班 / 最後下班表格。</p>
           </div>
           <div id="ocrMeta" class="muted">尚未 OCR</div>
         </div>
         <div class="ocr-controls">
           <div>
-            <label class="file-label" for="logsheetFile">上傳 logsheet 圖片 / PDF</label>
+            <label class="file-label" for="logsheetFile" data-project-copy="logUploadLabel">上傳 logsheet 圖片 / PDF</label>
             <input id="logsheetFile" type="file" multiple accept=".jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf">
           </div>
-          <textarea id="ocrPrompt" rows="3" placeholder="可選：補充月份年份，例如 August 2025；或補充欄位規則。"></textarea>
+          <textarea id="ocrPrompt" rows="3" data-project-placeholder="ocrPromptPlaceholder" placeholder="可選：補充月份年份，例如 August 2025；或補充欄位規則。"></textarea>
           <div class="actions">
             <label class="checkbox-label ocr-enhance-toggle">
               <input id="ocrEnhanceImageInput" type="checkbox" checked>
               <span>影像增強</span>
             </label>
-            <button id="ocrButton" type="button">OCR 全部檔案</button>
+            <button id="ocrButton" type="button" data-project-copy="ocrButtonLabel">OCR 全部檔案</button>
           </div>
         </div>
         <div id="ocrProgress" class="ocr-progress" hidden>
@@ -238,7 +271,7 @@
         <div class="entries-header">
           <div>
             <p class="eyebrow">Step 4</p>
-            <h2>排班 vs 打卡紙核對</h2>
+            <h2 data-project-copy="compareTitle">排班 vs 打卡紙核對</h2>
             <p id="compareStatus" class="muted">尚未解析排班表和 OCR。</p>
           </div>
           <div class="compare-tools">
@@ -248,7 +281,7 @@
         <section id="compareSummary" class="summary-grid compact-grid"></section>
 
         <section class="review-workspace">
-          <aside class="logsheet-sidebar" aria-label="打卡紙來源文件">
+          <aside id="sourceSidebar" class="logsheet-sidebar" aria-label="打卡紙來源文件" data-project-aria-label="sourceSidebarAriaLabel">
             <div class="source-panel-head">
               <div>
                 <p class="eyebrow">Source files</p>
@@ -257,7 +290,7 @@
               <div id="logsheetAssignmentSummary" class="muted">0 sheets</div>
             </div>
             <div id="logsheetAssignmentList" class="logsheet-file-list">
-              <div class="logsheet-empty">上傳打卡紙後，可在這裡把檔案指派到正確員工。</div>
+              <div class="logsheet-empty" data-project-copy="assignmentEmptyText">上傳打卡紙後，可在這裡把檔案指派到正確員工。</div>
             </div>
           </aside>
           <section class="review-main">
@@ -337,7 +370,7 @@
         <div class="step-head">
           <div>
             <p class="eyebrow">Step 5</p>
-            <h2>匯出 / JSON</h2>
+            <h2>匯出</h2>
           </div>
           <div class="actions">
             <button id="resetReviewButton" type="button" class="secondary">重設修正</button>
@@ -350,6 +383,7 @@
           <div class="export-table-toolbar">
             <div>
               <h3>Excel 貼上表格</h3>
+              <p id="exportTableHint" class="export-table-hint">預設顯示核對明細。點欄名可選整欄，例如「實際時數」，再按複製選取即可貼到 Excel。</p>
               <div id="exportTableSelectionStatus" class="muted">尚未載入資料。</div>
             </div>
             <div class="export-table-tools">
@@ -458,19 +492,19 @@
             <aside class="roster-detail-image-pane">
               <div class="roster-detail-image-head">
                 <div>
-                  <span>打卡紙預覽</span>
+                  <span data-project-copy="detailPreviewLabel">打卡紙預覽</span>
                   <strong id="rosterDetailImageTitle">沒有圖片</strong>
                 </div>
                 <div class="roster-detail-image-controls">
-                  <button id="rosterDetailPrevImageButton" type="button" aria-label="上一張打卡紙" disabled>&lt;</button>
+                  <button id="rosterDetailPrevImageButton" type="button" aria-label="上一張打卡紙" data-project-aria-label="detailPrevAriaLabel" disabled>&lt;</button>
                   <span id="rosterDetailImageCount">0 / 0</span>
-                  <button id="rosterDetailNextImageButton" type="button" aria-label="下一張打卡紙" disabled>&gt;</button>
+                  <button id="rosterDetailNextImageButton" type="button" aria-label="下一張打卡紙" data-project-aria-label="detailNextAriaLabel" disabled>&gt;</button>
                   <button id="rosterDetailResetImageButton" type="button" aria-label="重設圖片位置" disabled>重設</button>
                 </div>
               </div>
               <div id="rosterDetailImageStage" class="roster-detail-image-stage">
-                <div id="rosterDetailImageEmpty" class="muted">這位員工沒有可預覽的打卡紙圖片。</div>
-                <img id="rosterDetailImage" alt="員工打卡紙" hidden>
+                <div id="rosterDetailImageEmpty" class="muted" data-project-copy="detailEmptyText">這位員工沒有可預覽的打卡紙圖片。</div>
+                <img id="rosterDetailImage" alt="員工打卡紙" data-project-alt="detailImageAlt" hidden>
               </div>
             </aside>
           </section>

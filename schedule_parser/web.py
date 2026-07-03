@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+import calendar
+from copy import deepcopy
+from datetime import datetime
 import os
+import re
 import traceback
 from typing import Any
 
 from flask import Flask, jsonify, render_template, request
 from werkzeug.exceptions import RequestEntityTooLarge
+from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.utils import secure_filename
 
+from .d_and_g import parse_d_and_g_schedule
 from .image_enhancement import prepare_ocr_image
 from .oil_street import parse_oil_street_schedule
 from .openrouter_ocr import (
@@ -34,6 +40,7 @@ DEFAULT_PORT = 5050
 
 def create_app() -> Flask:
     app = Flask(__name__, template_folder="templates", static_folder="static")
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1, x_prefix=1)
     app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES
     app.config["SCHEDULE_PARSER_DEBUG"] = os.getenv("SCHEDULE_PARSER_DEBUG") == "1"
 
@@ -71,7 +78,8 @@ def create_app() -> Flask:
         try:
             results = []
             daily_rows = []
-            prompt = (request.form.get("prompt") or "").strip() or None
+            project_profile = _project_profile_from_request()
+            prompt = _ocr_prompt_for_project(project_profile, request.form.get("prompt"))
             enhance_images = _coerce_bool(request.form.get("enhance_image"), default=True)
             for uploaded, safe_name in prepared_uploads:
                 raw_bytes = uploaded.read()
@@ -155,11 +163,24 @@ def create_app() -> Flask:
             raw_bytes = uploaded.read()
             if not raw_bytes:
                 return _error_response("上傳檔案是空的。", 400)
-            parsed = parse_oil_street_schedule(raw_bytes, filename=safe_name)
-            data = parsed.to_dict()
+            project_profile = _project_profile_from_request()
+            parsed = _parse_schedule_for_profile(project_profile, raw_bytes, safe_name)
+            full_schedule = parsed.to_dict()
+            full_schedule["project_profile"] = project_profile
+            variants = _schedule_month_variants(full_schedule)
+            inferred_key = _selected_schedule_variant_key(variants, safe_name)
+            selected_key = "__all__" if variants else inferred_key
+            data = full_schedule
             if raw_only:
                 return jsonify(data)
-            return jsonify({"ok": True, "schedule": data, "summary": _summary(data)})
+            return jsonify({
+                "ok": True,
+                "schedule": data,
+                "summary": _summary(data),
+                "schedule_variants": variants,
+                "selected_schedule_key": selected_key,
+                "inferred_schedule_key": inferred_key,
+            })
         except ValueError as exc:
             return _error_response(str(exc), 400)
         except Exception as exc:  # pragma: no cover - exercised only for unexpected failures
@@ -179,9 +200,175 @@ def _allowed_ocr_filename(filename: str) -> bool:
     return any(lower.endswith(ext) for ext in OCR_ALLOWED_EXTENSIONS)
 
 
+def _project_profile_from_request() -> str:
+    value = (request.form.get("project_profile") or "oil_street").strip().lower()
+    return value if value in {"oil_street", "heritage", "d_and_g"} else "oil_street"
+
+
+def _parse_schedule_for_profile(project_profile: str, raw_bytes: bytes, filename: str):
+    if project_profile == "d_and_g":
+        return parse_d_and_g_schedule(raw_bytes, filename=filename)
+    return parse_oil_street_schedule(raw_bytes, filename=filename)
+
+
+def _ocr_prompt_for_project(project_profile: str, user_prompt: Any) -> str | None:
+    extra = (str(user_prompt or "").strip()) or None
+    if project_profile != "d_and_g":
+        return extra
+    default_year = datetime.today().year
+    instructions = f"""
+D&G project instruction:
+- These files are Daniel & Co / D&G promoter work record sheets. A single photo can contain multiple separate paper forms.
+- Extract every visible form independently. Use the handwritten staff name in the form's name field for each row.
+- Do not infer a staff name from generic filenames such as "1 and 2 Apr 1.jpg", "3 Apr.jpg", or "Timesheet".
+- The work table columns are date/day, in time, store signature, out time, store signature, then review columns. Use only handwritten in/out times from the same table row.
+- Output one daily_rows item per filled table row per staff. Dates may be d/m, d-MMM, or day numbers. Prefer full YYYY-MM-DD dates; use {default_year} when the year is not visible unless the user instruction says otherwise.
+- Ignore blank printed am/pm markers, signatures, review stamps, and bank/account fields.
+""".strip()
+    if extra:
+        return f"{instructions}\n\nUser note:\n{extra}"
+    return instructions
+
+
+def _schedule_month_variants(schedule: dict[str, Any]) -> list[dict[str, Any]]:
+    months = _date_months(schedule.get("date_columns") or [])
+    if len(months) <= 1:
+        return []
+    return [
+        {
+            "key": month,
+            "month": month,
+            "label": _month_label(month),
+            "summary": _summary(month_schedule),
+            "schedule": month_schedule,
+        }
+        for month in months
+        for month_schedule in [_schedule_for_month(schedule, month)]
+    ]
+
+
+def _date_months(date_columns: list[dict[str, Any]]) -> list[str]:
+    months = []
+    for column in date_columns:
+        date_text = str(column.get("date") or "")
+        if re.match(r"^\d{4}-\d{2}-\d{2}$", date_text):
+            month = date_text[:7]
+            if month not in months:
+                months.append(month)
+    return months
+
+
+def _schedule_for_month(schedule: dict[str, Any], month: str) -> dict[str, Any]:
+    result = deepcopy(schedule)
+    date_columns = [
+        column for column in schedule.get("date_columns") or []
+        if str(column.get("date") or "").startswith(f"{month}-")
+    ]
+    entries = [
+        entry for entry in schedule.get("entries") or []
+        if str(entry.get("date") or "").startswith(f"{month}-")
+    ]
+    result["date_columns"] = date_columns
+    result["entries"] = entries
+    result["schedule_month"] = month
+    result["schedule_month_label"] = _month_label(month)
+    warnings = _filter_messages_for_month(schedule.get("warnings") or [], date_columns, entries)
+    errors = _filter_messages_for_month(schedule.get("errors") or [], date_columns, entries)
+    result["warnings"] = warnings
+    result["errors"] = errors
+    result["diagnostics"] = _month_diagnostics(schedule, month, date_columns, entries, warnings, errors)
+    return result
+
+
+def _filter_messages_for_month(
+    messages: list[dict[str, Any]],
+    date_columns: list[dict[str, Any]],
+    entries: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    cells = set()
+    cells.update(str(entry.get("date_cell") or "") for entry in entries)
+    cells.update(str(entry.get("schedule_cell") or "") for entry in entries)
+    for column in date_columns:
+        letter = str(column.get("letter") or "")
+        if letter:
+            cells.add(letter)
+    return [
+        message for message in messages
+        if not message.get("cell") or str(message.get("cell")) in cells
+    ]
+
+
+def _month_diagnostics(
+    schedule: dict[str, Any],
+    month: str,
+    date_columns: list[dict[str, Any]],
+    entries: list[dict[str, Any]],
+    warnings: list[dict[str, Any]],
+    errors: list[dict[str, Any]],
+) -> dict[str, Any]:
+    diagnostics = deepcopy(schedule.get("diagnostics") or {})
+    diagnostics["date_count"] = len(date_columns)
+    diagnostics["entry_count"] = len(entries)
+    diagnostics["warning_count"] = len(warnings)
+    diagnostics["error_count"] = len(errors)
+    diagnostics["month_split"] = {
+        "month": month,
+        "label": _month_label(month),
+        "source_sheet_name": schedule.get("sheet_name") or "",
+        "source_date_count": len(schedule.get("date_columns") or []),
+        "source_entry_count": len(schedule.get("entries") or []),
+        "date_count": len(date_columns),
+        "entry_count": len(entries),
+    }
+    return diagnostics
+
+
+def _selected_schedule_variant_key(variants: list[dict[str, Any]], filename: str) -> str:
+    if not variants:
+        return ""
+    inferred = _infer_month_from_filename(filename, [str(variant["key"]) for variant in variants])
+    if inferred:
+        return inferred
+    return str(variants[-1]["key"])
+
+
+def _infer_month_from_filename(filename: str, available_months: list[str]) -> str:
+    text = filename.lower()
+    for month_index in range(1, 13):
+        names = {calendar.month_name[month_index].lower(), calendar.month_abbr[month_index].lower()}
+        if not any(re.search(rf"\b{re.escape(name)}\b", text) for name in names if name):
+            continue
+        year_match = re.search(r"\b(20\d{2})\b", text)
+        if year_match:
+            candidate = f"{year_match.group(1)}-{month_index:02d}"
+            if candidate in available_months:
+                return candidate
+        month_matches = [month for month in available_months if month.endswith(f"-{month_index:02d}")]
+        if len(month_matches) == 1:
+            return month_matches[0]
+    return ""
+
+
+def _month_label(month: str) -> str:
+    try:
+        year, month_number = month.split("-")
+        return f"{calendar.month_name[int(month_number)]} {year}"
+    except (ValueError, IndexError):
+        return month
+
+
 def _combined_ocr_result(results: list[dict[str, Any]], daily_rows: list[dict[str, Any]]) -> dict[str, Any]:
     source_filenames = [result.get("source_filename") or "" for result in results if result.get("source_filename")]
-    merged_rows = merge_logsheet_daily_rows(daily_rows)
+    if len(results) == 1 and isinstance(results[0].get("page_results"), list):
+        merged_rows = results[0].get("daily_rows") or daily_rows
+    else:
+        merged_rows = merge_logsheet_daily_rows(daily_rows)
+    page_results = [
+        page
+        for result in results
+        for page in (result.get("page_results") or [])
+        if isinstance(page, dict)
+    ]
     return {
         "source_count": len(results),
         "source_filename": ", ".join(source_filenames),
@@ -196,6 +383,7 @@ def _combined_ocr_result(results: list[dict[str, Any]], daily_rows: list[dict[st
             "results": [result.get("structured") for result in results],
         },
         "results": results,
+        "page_results": page_results,
         "usage": _combined_usage(results),
     }
 
@@ -261,6 +449,8 @@ def _summary(schedule: dict[str, Any]) -> dict[str, Any]:
     return {
         "source_filename": schedule.get("source_filename") or "",
         "sheet_name": schedule.get("sheet_name") or "",
+        "schedule_month": schedule.get("schedule_month") or "",
+        "schedule_month_label": schedule.get("schedule_month_label") or "",
         "layout_type": schedule.get("layout_type") or "",
         "header_row": schedule.get("header_row"),
         "date_count": len(schedule.get("date_columns") or []),

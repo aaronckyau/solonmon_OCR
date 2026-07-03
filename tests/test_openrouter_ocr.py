@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+from io import BytesIO
+import json
+
+import pytest
+
 from schedule_parser import openrouter_ocr
 
 
@@ -48,6 +53,59 @@ def test_pdf_payload_uses_file_parser_plugin():
     assert content[1]["type"] == "file"
     assert content[1]["file"]["file_data"].startswith("data:application/pdf;base64,")
     assert payload["plugins"][0]["id"] == "file-parser"
+
+
+def test_pdf_ocr_splits_pages_and_merges_rows(monkeypatch):
+    pypdf = pytest.importorskip("pypdf")
+    writer = pypdf.PdfWriter()
+    writer.add_blank_page(width=72, height=72)
+    writer.add_blank_page(width=72, height=72)
+    buffer = BytesIO()
+    writer.write(buffer)
+    calls = []
+
+    def fake_post(payload, *, api_key):
+        calls.append(payload)
+        page_filename = payload["messages"][0]["content"][1]["file"]["filename"]
+        day = "1" if page_filename.endswith("_page_01.pdf") else "2"
+        return {
+            "model": "fake-model",
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "document_type": "logsheet",
+                                "month_year": "May 2026",
+                                "daily_rows": [
+                                    {"name": "Helper A", "date": day, "sign_in": "09:00", "sign_out": "18:00"}
+                                ],
+                            }
+                        )
+                    },
+                }
+            ],
+            "usage": {"total_tokens": 10},
+        }
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("OPENROUTER_PDF_PARALLELISM", "1")
+    monkeypatch.setattr(openrouter_ocr, "_post_openrouter", fake_post)
+
+    result = openrouter_ocr.ocr_logsheet_with_openrouter(
+        buffer.getvalue(),
+        "FM2026_gallery helper sign-in sheet_May.pdf",
+        mime_type="application/pdf",
+        prompt="May 2026",
+    )
+
+    assert len(calls) == 2
+    assert result["text"] == "PDF split OCR: 2 pages, 2 rows."
+    assert result["usage"]["total_tokens"] == 20
+    assert [row["date"] for row in result["daily_rows"]] == ["2026-05-01", "2026-05-02"]
+    assert {row["source_filename"] for row in result["daily_rows"]} == {"FM2026_gallery helper sign-in sheet_May.pdf"}
+    assert [page["row_count"] for page in result["page_results"]] == [1, 1]
 
 
 def test_normalizes_daily_rows_to_first_in_last_out():
@@ -128,6 +186,70 @@ def test_normalize_uses_context_hint_for_month_year():
     )
 
     assert rows[0]["date"] == "2025-08-21"
+
+
+def test_normalize_reads_nested_pdf_pages_and_sign_in_columns():
+    rows = openrouter_ocr.normalize_logsheet_daily_rows(
+        {
+            "document_type": "logsheet",
+            "pages": [
+                {
+                    "page": 1,
+                    "daily_rows": [
+                        {
+                            "Helper Name": "Lee Mei Mei",
+                            "Date": "5",
+                            "Sign In": "09:14",
+                            "Sign Out": "18:03",
+                        }
+                    ],
+                }
+            ],
+        },
+        "FM2026_gallery helper sign-in sheet_May.pdf",
+        context_hint="May 2026",
+    )
+
+    assert rows == [
+        {
+            "name": "Lee Mei Mei",
+            "date": "2026-05-05",
+            "in": "09:14",
+            "out": "18:03",
+            "source_filename": "FM2026_gallery helper sign-in sheet_May.pdf",
+            "source_filenames": ["FM2026_gallery helper sign-in sheet_May.pdf"],
+            "all_times": ["09:14", "18:03"],
+            "warnings": [],
+        }
+    ]
+
+
+def test_normalize_does_not_use_generic_heritage_filename_as_staff_name():
+    rows = openrouter_ocr.normalize_logsheet_daily_rows(
+        {"entries": [{"name": "Helper A", "date": "5", "sign_in": "09:00", "sign_out": "18:00"}]},
+        "heritage_may.pdf",
+        context_hint="May 2026",
+    )
+
+    assert rows[0]["name"] == "Helper A"
+
+
+def test_normalize_d_and_g_generic_date_filename_and_day_month_date():
+    rows = openrouter_ocr.normalize_logsheet_daily_rows(
+        {
+            "daily_rows": [
+                {"name": "LEE Sarah", "date": "1/5", "in": "10:00", "out": "21:15"},
+                {"name": "Chan Suet Wah Sana", "date": "2 Apr", "in": "09:00", "out": "21:30"},
+            ]
+        },
+        "1 and 2 Apr 1.jpg",
+        context_hint="April 2026",
+    )
+
+    assert rows[0]["name"] == "LEE Sarah"
+    assert rows[0]["date"] == "2026-05-01"
+    assert rows[1]["name"] == "Chan Suet Wah Sana"
+    assert rows[1]["date"] == "2026-04-02"
 
 
 def test_normalize_prefers_filename_staff_name_over_card_name():

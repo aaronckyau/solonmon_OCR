@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from io import BytesIO
 import json
 import mimetypes
 import os
@@ -16,6 +18,8 @@ from urllib.request import Request, urlopen
 DEFAULT_OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_OPENROUTER_MODEL = "qwen/qwen3.6-35b-a3b"
 DEFAULT_PDF_ENGINE = "mistral-ocr"
+DEFAULT_PDF_PARALLELISM = 3
+DEFAULT_PDF_MAX_PAGES = 80
 SUPPORTED_IMAGE_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
 SUPPORTED_PDF_MIME_TYPE = "application/pdf"
 TIME_RE = re.compile(r"(?<!\d)([01]?\d|2[0-3])\s*[:：.]\s*([0-5]\d)(?!\d)")
@@ -29,11 +33,61 @@ MONTH_RE = re.compile(
 )
 YEAR_MONTH_RE = re.compile(r"\b(\d{4})[-_/ ](0?[1-9]|1[0-2])\b")
 ISO_DATE_RE = re.compile(r"\b(\d{4})[-/](0?[1-9]|1[0-2])[-/](0?[1-9]|[12]\d|3[01])\b")
-DATE_FIELD_NAMES = ("date", "day", "day_number", "date_number")
-NAME_FIELD_NAMES = ("name", "staff_name", "employee_name", "worker_name")
+DAY_MONTH_RE = re.compile(r"(?<!\d)([1-9]|[12]\d|3[01])\s*[-/]\s*(0?[1-9]|1[0-2])(?!\d)")
+MONTH_NAME_DATE_RE = re.compile(
+    r"(?<!\d)([1-9]|[12]\d|3[01])(?:st|nd|rd|th)?\s*[-/ ]\s*"
+    r"(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
+    r"jul(?:y)?|aug(?:ust)?|sep(?:tember)?|sept(?:ember)?|oct(?:ober)?|"
+    r"nov(?:ember)?|dec(?:ember)?)(?:\.|\b)(?:\s+(\d{4}))?",
+    re.IGNORECASE,
+)
+DATE_FIELD_NAMES = (
+    "date",
+    "day",
+    "day_number",
+    "date_number",
+    "work_date",
+    "shift_date",
+    "date_day",
+    "日期",
+    "日",
+)
+NAME_FIELD_NAMES = (
+    "name",
+    "staff_name",
+    "employee_name",
+    "worker_name",
+    "staff",
+    "employee",
+    "helper",
+    "helper_name",
+    "full_name",
+    "person",
+    "person_name",
+    "姓名",
+    "員工",
+)
 PUNCH_TIME_FIELD_NAMES = (
     "in",
     "out",
+    "time_in",
+    "time_out",
+    "check_in",
+    "check_out",
+    "clock_in",
+    "clock_out",
+    "sign_in",
+    "sign_out",
+    "signin",
+    "signout",
+    "start",
+    "end",
+    "start_time",
+    "end_time",
+    "arrival",
+    "departure",
+    "report_time",
+    "leave_time",
     "first_in",
     "last_out",
     "actual_in",
@@ -51,6 +105,11 @@ PUNCH_TIME_FIELD_NAMES = (
     "all_times",
     "raw_times",
     "source_text",
+    "簽到",
+    "簽出",
+    "上班",
+    "下班",
+    "時間",
 )
 MONTHS = {
     "jan": 1,
@@ -104,9 +163,42 @@ def ocr_logsheet_with_openrouter(
         raise OpenRouterOCRConfigError("OPENROUTER_API_KEY is not set.")
 
     model = _config_value("OPENROUTER_MODEL", DEFAULT_OPENROUTER_MODEL)
-    payload = build_logsheet_ocr_payload(
+    detected_mime = _normalize_mime_type(filename, mime_type)
+    if detected_mime == SUPPORTED_PDF_MIME_TYPE and _config_bool("OPENROUTER_SPLIT_PDF", True):
+        pdf_pages = _split_pdf_pages(file_bytes, filename)
+        if len(pdf_pages) > 1:
+            return _ocr_logsheet_pdf_pages_with_openrouter(
+                pdf_pages,
+                filename,
+                api_key=api_key,
+                model=model,
+                prompt=prompt,
+            )
+
+    return _ocr_logsheet_once_with_openrouter(
         file_bytes,
         filename,
+        api_key=api_key,
+        model=model,
+        mime_type=detected_mime,
+        prompt=prompt,
+        source_filename=filename,
+    )
+
+
+def _ocr_logsheet_once_with_openrouter(
+    file_bytes: bytes,
+    payload_filename: str,
+    *,
+    api_key: str,
+    model: str,
+    mime_type: str,
+    prompt: str | None = None,
+    source_filename: str | None = None,
+) -> dict[str, Any]:
+    payload = build_logsheet_ocr_payload(
+        file_bytes,
+        payload_filename,
         model=model,
         mime_type=mime_type,
         prompt=prompt,
@@ -116,10 +208,10 @@ def ocr_logsheet_with_openrouter(
     message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
     text = _message_text(message.get("content"))
     structured = _extract_json_object(text)
-    daily_rows = normalize_logsheet_daily_rows(structured, filename, context_hint=prompt)
+    daily_rows = normalize_logsheet_daily_rows(structured, source_filename or payload_filename, context_hint=prompt)
 
     return {
-        "source_filename": filename,
+        "source_filename": source_filename or payload_filename,
         "configured_model": model,
         "response_model": response.get("model") or "",
         "finish_reason": choice.get("finish_reason") or "",
@@ -129,6 +221,130 @@ def ocr_logsheet_with_openrouter(
         "usage": response.get("usage") or {},
         "annotations": message.get("annotations") or [],
     }
+
+
+def _ocr_logsheet_pdf_pages_with_openrouter(
+    pdf_pages: list[tuple[int, bytes, str]],
+    source_filename: str,
+    *,
+    api_key: str,
+    model: str,
+    prompt: str | None = None,
+) -> dict[str, Any]:
+    page_results: list[dict[str, Any] | None] = [None] * len(pdf_pages)
+    errors: list[str] = []
+    max_workers = min(len(pdf_pages), _config_int("OPENROUTER_PDF_PARALLELISM", DEFAULT_PDF_PARALLELISM))
+
+    def ocr_page(page_number: int, page_bytes: bytes, page_filename: str) -> dict[str, Any]:
+        page_prompt = _page_prompt(prompt, page_number, len(pdf_pages))
+        return _ocr_logsheet_once_with_openrouter(
+            page_bytes,
+            page_filename,
+            api_key=api_key,
+            model=model,
+            mime_type=SUPPORTED_PDF_MIME_TYPE,
+            prompt=page_prompt,
+            source_filename=source_filename,
+        )
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_page = {
+            executor.submit(ocr_page, page_number, page_bytes, page_filename): (index, page_number, page_filename)
+            for index, (page_number, page_bytes, page_filename) in enumerate(pdf_pages)
+        }
+        for future in as_completed(future_to_page):
+            index, page_number, page_filename = future_to_page[future]
+            try:
+                page_results[index] = future.result()
+            except Exception as exc:  # pragma: no cover - defensive around external API failures
+                errors.append(f"page {page_number} {page_filename}: {exc}")
+
+    completed_results = [result for result in page_results if result]
+    if not completed_results and errors:
+        raise OpenRouterOCRAPIError(f"PDF OCR failed for every page: {'; '.join(errors[:3])}")
+
+    daily_rows = merge_logsheet_daily_rows([
+        row
+        for result in completed_results
+        for row in result.get("daily_rows") or []
+    ])
+    page_summaries = [
+        {
+            "page": page_number,
+            "source_filename": page_filename,
+            "row_count": len(result.get("daily_rows") or []) if result else 0,
+            "finish_reason": result.get("finish_reason") if result else "error",
+        }
+        for result, (page_number, _page_bytes, page_filename) in zip(page_results, pdf_pages)
+    ]
+    finish_reasons = sorted({str(result.get("finish_reason") or "") for result in completed_results if result.get("finish_reason")})
+    warnings = [f"PDF page OCR warning: {message}" for message in errors]
+
+    return {
+        "source_filename": source_filename,
+        "configured_model": model,
+        "response_model": completed_results[0].get("response_model") if completed_results else "",
+        "finish_reason": ",".join(finish_reasons) or "partial",
+        "text": f"PDF split OCR: {len(pdf_pages)} pages, {len(daily_rows)} rows.",
+        "structured": {
+            "document_type": "logsheet",
+            "daily_rows": daily_rows,
+            "pages": page_summaries,
+            "warnings": warnings,
+        },
+        "daily_rows": daily_rows,
+        "usage": _sum_openrouter_usage(completed_results),
+        "annotations": [],
+        "page_results": page_summaries,
+    }
+
+
+def _page_prompt(prompt: str | None, page_number: int, total_pages: int) -> str:
+    extra = (prompt or "").strip()
+    page_instruction = (
+        f"This is page {page_number} of {total_pages} from one PDF. "
+        "Extract only readable worked rows on this page. "
+        "Do not include blank rows or rows without punch times."
+    )
+    return f"{extra}\n{page_instruction}".strip()
+
+
+def _split_pdf_pages(file_bytes: bytes, filename: str) -> list[tuple[int, bytes, str]]:
+    try:
+        from pypdf import PdfReader, PdfWriter
+    except Exception:
+        return [(1, file_bytes, filename)]
+
+    try:
+        reader = PdfReader(BytesIO(file_bytes))
+        page_count = len(reader.pages)
+    except Exception:
+        return [(1, file_bytes, filename)]
+    if page_count <= 1:
+        return [(1, file_bytes, filename)]
+
+    max_pages = min(page_count, _config_int("OPENROUTER_PDF_MAX_PAGES", DEFAULT_PDF_MAX_PAGES))
+    stem = Path(filename).stem or "logsheet"
+    pages: list[tuple[int, bytes, str]] = []
+    for page_index in range(max_pages):
+        writer = PdfWriter()
+        writer.add_page(reader.pages[page_index])
+        buffer = BytesIO()
+        writer.write(buffer)
+        pages.append((page_index + 1, buffer.getvalue(), f"{stem}_page_{page_index + 1:02d}.pdf"))
+    return pages
+
+
+def _sum_openrouter_usage(results: list[dict[str, Any]]) -> dict[str, int]:
+    totals: dict[str, int] = {}
+    for result in results:
+        usage = result.get("usage")
+        if not isinstance(usage, dict):
+            continue
+        for key, value in usage.items():
+            if isinstance(value, int):
+                totals[key] = totals.get(key, 0) + value
+    return totals
 
 
 def build_logsheet_ocr_payload(
@@ -348,6 +564,9 @@ Rules:
 - Preserve exact names, dates, times, handwritten marks, and table text.
 - Use null for unreadable or missing values; do not guess.
 - Keep all row order from the source document.
+- For register/sign-in sheet PDFs with many helpers, output one "daily_rows" item per person per worked date.
+- For register/sign-in sheet PDFs, preserve each helper/staff name in the row-level "name" field.
+- Treat columns such as NAME, HELPER, DATE, SIGN IN, SIGN OUT, CHECK IN, and CHECK OUT as valid source columns.
 - For each date/day row, collect every readable handwritten punch time in that row from MORNING, AFTERNOON, and OVER TIME columns.
 - If a handwritten time includes the day prefix, such as "21 09:40", normalize the time to "09:40".
 - The printed or left-margin row number is the date/day only. Never combine that row number with a nearby time, and never treat it as a punch time.
@@ -369,24 +588,64 @@ Rules:
 
 def _candidate_logsheet_rows(structured: Any) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    if isinstance(structured, list):
-        return [item for item in structured if isinstance(item, dict)]
-    for key in ("daily_rows", "entries", "rows"):
-        value = structured.get(key)
-        if isinstance(value, list):
-            rows.extend(item for item in value if isinstance(item, dict))
-    tables = structured.get("tables")
-    if isinstance(tables, list):
-        for table in tables:
-            if not isinstance(table, dict):
-                continue
-            columns = table.get("columns") if isinstance(table.get("columns"), list) else []
-            for row in table.get("rows") or []:
-                if isinstance(row, dict):
-                    rows.append(row)
-                elif isinstance(row, list) and columns:
-                    rows.append({str(column): row[index] if index < len(row) else None for index, column in enumerate(columns)})
+    seen: set[int] = set()
+
+    def add_row(item: Any) -> None:
+        if not isinstance(item, dict):
+            return
+        item_id = id(item)
+        if item_id in seen:
+            return
+        seen.add(item_id)
+        rows.append(item)
+
+    def visit(node: Any, *, allow_self_row: bool = False) -> None:
+        if isinstance(node, list):
+            for item in node:
+                if _looks_like_logsheet_row(item):
+                    add_row(item)
+                visit(item, allow_self_row=True)
+            return
+        if not isinstance(node, dict):
+            return
+        if allow_self_row and _looks_like_logsheet_row(node):
+            add_row(node)
+        for key in ("daily_rows", "entries", "rows", "records", "data"):
+            value = node.get(key)
+            if isinstance(value, list):
+                for item in value:
+                    if isinstance(item, dict):
+                        add_row(item)
+                    else:
+                        visit(item, allow_self_row=True)
+            elif isinstance(value, dict):
+                visit(value, allow_self_row=True)
+        tables = node.get("tables")
+        if isinstance(tables, list):
+            for table in tables:
+                if not isinstance(table, dict):
+                    continue
+                columns = table.get("columns") if isinstance(table.get("columns"), list) else []
+                for row in table.get("rows") or []:
+                    if isinstance(row, dict):
+                        add_row(row)
+                    elif isinstance(row, list) and columns:
+                        add_row({str(column): row[index] if index < len(row) else None for index, column in enumerate(columns)})
+        for key in ("pages", "sheets", "documents", "results", "children"):
+            visit(node.get(key), allow_self_row=True)
+
+    visit(structured)
     return rows
+
+
+def _looks_like_logsheet_row(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    return bool(
+        _first_present(value, DATE_FIELD_NAMES)
+        or _first_present(value, NAME_FIELD_NAMES)
+        or _extract_times_from_row(value)
+    )
 
 
 def _extract_name_hint(structured: Any) -> str | None:
@@ -430,6 +689,22 @@ def _normalize_date(value: Any, year_month: tuple[int, int] | None) -> str | Non
     if iso_match:
         year, month, day = (int(part) for part in iso_match.groups())
         return f"{year:04d}-{month:02d}-{day:02d}"
+    day_month_match = DAY_MONTH_RE.search(text)
+    if day_month_match and year_month:
+        day = int(day_month_match.group(1))
+        month = int(day_month_match.group(2))
+        year, _context_month = year_month
+        return f"{year:04d}-{month:02d}-{day:02d}"
+    month_name_match = MONTH_NAME_DATE_RE.search(text)
+    if month_name_match:
+        day = int(month_name_match.group(1))
+        month_name = month_name_match.group(2).lower()
+        month = MONTHS.get(month_name[:3]) or MONTHS.get(month_name)
+        year_text = month_name_match.group(3)
+        if month:
+            year = int(year_text) if year_text else (year_month[0] if year_month else None)
+            if year:
+                return f"{year:04d}-{month:02d}-{day:02d}"
     day_match = re.search(r"(?<!\d)([1-9]|[12]\d|3[01])(?!\d)", text)
     if not day_match:
         return text
@@ -442,9 +717,11 @@ def _normalize_date(value: Any, year_month: tuple[int, int] | None) -> str | Non
 
 def _extract_times_from_row(row: dict[str, Any]) -> list[str]:
     values: list[Any] = []
-    for key in PUNCH_TIME_FIELD_NAMES:
-        if key in row:
-            values.append(row[key])
+    canonical_names = {_canonical_field_name(name) for name in PUNCH_TIME_FIELD_NAMES}
+    canonical_names.discard("")
+    for key, value in row.items():
+        if key in PUNCH_TIME_FIELD_NAMES or _canonical_field_name(str(key)) in canonical_names:
+            values.append(value)
     return _extract_time_values(values)
 
 
@@ -486,7 +763,20 @@ def _first_present(row: dict[str, Any], names: tuple[str, ...]) -> Any:
     for name in names:
         if row.get(name) not in (None, ""):
             return row.get(name)
+    canonical_values: dict[str, Any] = {}
+    for key, value in row.items():
+        canonical = _canonical_field_name(str(key))
+        if canonical and canonical not in canonical_values:
+            canonical_values[canonical] = value
+    for name in names:
+        value = canonical_values.get(_canonical_field_name(name))
+        if value not in (None, ""):
+            return value
     return None
+
+
+def _canonical_field_name(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", value.lower())
 
 
 def _string_or_none(value: Any) -> str | None:
@@ -509,6 +799,23 @@ def _infer_staff_name_from_filename(source_filename: str) -> str | None:
     stem = Path(source_filename).stem
     stem = re.sub(r"[_-]+", " ", stem)
     stem = re.sub(r"\s+", " ", stem).strip()
+    lower_stem = stem.lower()
+    generic_patterns = (
+        r"\bheritage\b",
+        r"\bfm\d{4}\b",
+        r"\bsign\s*in\s*sheet\b",
+        r"\bsignin\s*sheet\b",
+        r"\bsign\s*out\s*sheet\b",
+        r"\blog\s*sheet\b",
+        r"\bregister\b",
+        r"\bregister\s+for\s+exhibition\s+helpers\b",
+        r"\bgallery\s+helper\b",
+        r"\btimesheet\b",
+        r"\b\d{1,2}\s+and\s+\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)\b",
+        r"\b\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)\b",
+    )
+    if any(re.search(pattern, lower_stem) for pattern in generic_patterns):
+        return None
     stem = re.sub(r"(?i)^oil street\s+", "", stem)
     stem = re.sub(r"(?i)\b(?:timecard|timesheet|logsheet)\b", "", stem)
     stem = re.sub(r"\s*\(\d+\)\s*$", "", stem)
@@ -701,6 +1008,13 @@ def _config_int(name: str, default: int) -> int:
     except ValueError:
         return default
     return max(1, value)
+
+
+def _config_bool(name: str, default: bool = False) -> bool:
+    raw_value = _config_value(name)
+    if not raw_value:
+        return default
+    return raw_value.strip().lower() not in {"0", "false", "no", "off"}
 
 
 @lru_cache(maxsize=1)

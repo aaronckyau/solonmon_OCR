@@ -2,7 +2,13 @@ import json
 
 from schedule_parser.oil_street import parse_oil_street_schedule
 
-from conftest import save_apr_style_workbook, save_formula_header_workbook, save_jan_style_workbook, save_slash_code_workbook
+from conftest import (
+    save_apr_style_workbook,
+    save_formula_header_workbook,
+    save_jan_style_workbook,
+    save_long_multi_month_workbook,
+    save_slash_code_workbook,
+)
 
 
 def test_jan_style_generated_workbook_parses_direct_time_layout(tmp_path):
@@ -76,6 +82,18 @@ def test_summary_columns_stop_date_detection_and_unknown_code_is_preserved(tmp_p
     assert unknown.resolution_source == "unresolved"
     assert "UNKNOWN_SHIFT_CODE" in unknown.warnings
     assert "Z9" in parsed.diagnostics["unknown_shift_codes"]
+
+
+def test_multi_month_shift_matrix_keeps_dates_after_day_31(tmp_path):
+    path = save_long_multi_month_workbook(tmp_path / "Heritage Apr May 2026.xlsx")
+
+    parsed = parse_oil_street_schedule(path)
+    dates = [column.date for column in parsed.date_columns]
+
+    assert len(parsed.date_columns) == 35
+    assert dates[-3:] == ["2026-05-29", "2026-05-30", "2026-05-31"]
+    assert "Days (May)" not in [column.raw_value for column in parsed.date_columns]
+    assert [entry.date for entry in parsed.entries[-3:]] == ["2026-05-29", "2026-05-30", "2026-05-31"]
 
 
 def test_generated_workbook_slash_codes_do_not_flood_warnings(tmp_path):

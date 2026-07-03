@@ -7,7 +7,7 @@ from PIL import Image
 
 from schedule_parser.web import create_app
 
-from conftest import save_jan_style_workbook
+from conftest import save_d_and_g_workbook, save_jan_style_workbook, save_multi_month_workbook
 
 
 def client():
@@ -30,21 +30,47 @@ def test_health_returns_ok():
     assert response.get_json() == {"status": "ok"}
 
 
+def test_index_sets_api_base_from_script_root():
+    root_response = client().get("/")
+    prefixed_response = client().get("/", environ_overrides={"SCRIPT_NAME": "/hr_scan"})
+    forwarded_prefix_response = client().get("/", headers={"X-Forwarded-Prefix": "/solomonscan"})
+
+    assert root_response.status_code == 200
+    assert 'data-api-base=""' in root_response.get_data(as_text=True)
+    assert prefixed_response.status_code == 200
+    assert 'data-api-base="/hr_scan"' in prefixed_response.get_data(as_text=True)
+    forwarded_body = forwarded_prefix_response.get_data(as_text=True)
+    assert forwarded_prefix_response.status_code == 200
+    assert 'data-api-base="/solomonscan"' in forwarded_body
+    assert 'href="/solomonscan/static/parser_styles.css"' in forwarded_body
+
+
 def test_index_renders_upload_page():
     response = client().get("/")
     body = response.get_data(as_text=True)
 
     assert response.status_code == 200
+    assert 'data-api-base=""' in body
     assert "Oil Street 排班工作台" in body
+    assert "0 選擇專案" in body
     assert "1 上傳排班表" in body
     assert "2 檢查排班" in body
     assert "3 上傳打卡紙" in body
     assert "4 核對排班" in body
-    assert "5 匯出 JSON" in body
+    assert "5 匯出" in body
+    assert "5 匯出 JSON" not in body
     assert "讀取排班表" in body
+    assert 'data-workflow-step="project-select"' in body
+    assert 'data-project-profile="oil_street"' in body
+    assert 'data-project-profile="heritage"' in body
+    assert 'data-project-profile="d_and_g"' in body
+    assert "Heritage gallery helper sign-in sheet PDF" in body
+    assert "D&G Job Applications Excel" in body
     assert "確認排班表" in body
     assert "下載修正 JSON" in body
     assert "Excel 貼上表格" in body
+    assert "<h2>匯出</h2>" in body
+    assert "<h2>匯出 / JSON</h2>" not in body
     assert "exportTableDatasetSelect" in body
     assert "copyExportTableSelectionButton" in body
     assert "copyExportTableAllButton" in body
@@ -88,8 +114,48 @@ def test_index_renders_upload_page():
     assert "rosterDetailImageCount" in body
     assert "logsheetAssignmentList" in body
     assert "logsheetAssignmentSummary" in body
+    assert "scheduleVariantSection" in body
+    assert "scheduleVariantSelect" in body
+    assert "scheduleVariantStatus" in body
     assert 'id="messagesSection" hidden' in body
     assert body.index("<h3>排班資料</h3>") < body.index("<summary>班次時間</summary>")
+
+
+def test_project_step_supports_heritage_log_sheet_copy():
+    root = Path(__file__).parents[1]
+    body = (root / "schedule_parser" / "templates" / "parser_index.html").read_text(encoding="utf-8")
+    script = (root / "schedule_parser" / "static" / "parser_app.js").read_text(encoding="utf-8")
+    styles = (root / "schedule_parser" / "static" / "parser_styles.css").read_text(encoding="utf-8")
+
+    assert "PROJECT_PROFILES" in script
+    assert 'DEFAULT_PROJECT_PROFILE = "oil_street"' in script
+    assert '"project-select", "schedule-upload", "check-schedule"' in script
+    assert "function selectProjectProfile" in script
+    assert "function applyProjectProfileCopy" in script
+    assert 'data-project-copy="logStepLabel"' in body
+    assert 'data-project-placeholder="ocrPromptPlaceholder"' in body
+    assert 'data-project-aria-label="sourceSidebarAriaLabel"' in body
+    assert "Heritage log sheet OCR" in script
+    assert "REGISTER FOR EXHIBITION HELPERS" in script
+    assert "D&G 工作紀錄 OCR" in script
+    assert "D&G Job Applications" in script
+    assert "請先選擇 Heritage log sheet PDF 或圖片。" in script
+    assert ".project-card.is-selected" in styles
+    assert "form.append(\"project_profile\", state.projectProfile)" in script
+    assert "function normalizeScheduleVariants" in script
+    assert "function renderScheduleVariantSelector" in script
+    assert "function handleScheduleVariantChange" in script
+    assert 'ALL_SCHEDULE_VARIANT_KEY = "__all__"' in script
+    assert 'label: "全部月份"' in script
+    assert ".schedule-variant-panel" in styles
+    assert "const API_BASE_PATH" in script
+    assert "function apiUrl" in script
+    assert "function readApiJson" in script
+    assert "function apiErrorMessage" in script
+    assert 'fetch(apiUrl("/api/parse")' in script
+    assert 'fetch(apiUrl("/api/ocr-logsheet")' in script
+    assert 'fetch(apiUrl("/api/compare-roster")' in script
+    assert 'fetch("/api/' not in script
 
 
 def test_step_two_summary_omits_low_value_cards():
@@ -114,12 +180,20 @@ def test_schedule_summary_days_and_hours_can_be_manually_overridden():
     assert "handleScheduleSummaryOverrideChange" in script
     assert "renderScheduleSummaryInput" in script
     assert "applyScheduleSummaryOverrides" in script
+    assert "function scheduleMonthColumnsFromRows" in script
+    assert "function scheduleMonthField" in script
+    assert "function isScheduleSummaryMonthField" in script
     assert 'data-summary-field="${escapeAttr(field)}"' in script
     assert 'renderScheduleSummaryInput(row, "normalDays", "Normal day Days")' in script
     assert 'renderScheduleSummaryInput(row, "publicHolidayHours", "PH day Hours")' in script
+    assert "month.daysField" in script
+    assert "month.hoursField" in script
+    assert "entries-col-month-hours" in script
     assert "<small>Days</small>" in script
     assert "<small>Hours</small>" in script
     assert ".summary-override-input" in styles
+    assert ".entries-table table.is-month-split" in styles
+    assert ".entries-col-month-hours" in styles
     assert ".summary-override-input::-webkit-inner-spin-button" in styles
     assert "appearance: textfield" in styles
 
@@ -154,6 +228,9 @@ def test_export_json_step_has_excel_copyable_table_selection():
     styles = (root / "schedule_parser" / "static" / "parser_styles.css").read_text(encoding="utf-8")
 
     assert "Excel 貼上表格" in body
+    assert "點欄名可選整欄" in body
+    assert "實際時數" in body
+    assert "exportTableHint" in body
     assert "exportTableHead" in body
     assert "exportTableBody" in body
     assert "exportTableIncludeHeadersInput" in body
@@ -161,6 +238,12 @@ def test_export_json_step_has_excel_copyable_table_selection():
     assert "function copyExportTableSelection" in script
     assert "function exportTableToTsv" in script
     assert "function exportScheduleEntryRows" in script
+    assert 'DEFAULT_EXPORT_TABLE_DATASET = "compare_rows"' in script
+    assert "exportTableUserSelected" in script
+    assert '["actual_hours", "實際時數"]' in script
+    assert "actual_hours: row.has_actual ? formatRosterHours(actualDurationHours(row.actual_in, row.actual_out)) : \"\"" in script
+    assert 'title="選取 ${escapeAttr(label)} 整欄"' in script
+    assert 'aria-label="選取 ${escapeAttr(label)} 整欄"' in script
     assert "data-export-column" in script
     assert "data-export-row" in script
     assert "navigator.clipboard.writeText(tsv)" in script
@@ -348,6 +431,43 @@ def test_ocr_logsheet_success_uses_openrouter_client(monkeypatch):
     assert payload["ocr"]["daily_rows"][0]["name"] == "Chan Ching Yee Jenny"
 
 
+def test_ocr_logsheet_adds_d_and_g_project_prompt(monkeypatch):
+    calls = []
+
+    def fake_ocr(file_bytes, filename, *, mime_type=None, prompt=None):
+        calls.append((file_bytes, filename, mime_type, prompt))
+        return {
+            "source_filename": filename,
+            "configured_model": "qwen/qwen3.6-35b-a3b",
+            "response_model": "qwen/qwen3.6-35b-a3b",
+            "text": "{}",
+            "structured": {},
+            "daily_rows": [],
+            "usage": {},
+            "annotations": [],
+        }
+
+    monkeypatch.setattr("schedule_parser.web.ocr_logsheet_with_openrouter", fake_ocr)
+    response = client().post(
+        "/api/ocr-logsheet",
+        data={
+            "logsheet": (BytesIO(b"fake image"), "1 and 2 Apr 1.jpg"),
+            "project_profile": "d_and_g",
+            "prompt": "April 2026",
+            "enhance_image": "0",
+        },
+        content_type="multipart/form-data",
+    )
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["ok"] is True
+    assert "D&G project instruction" in calls[0][3]
+    assert "multiple separate paper forms" in calls[0][3]
+    assert "1 and 2 Apr 1.jpg" in calls[0][3]
+    assert "April 2026" in calls[0][3]
+
+
 def test_ocr_logsheet_enhances_image_by_default(monkeypatch):
     original = png_bytes()
     calls = []
@@ -480,3 +600,58 @@ def test_parse_generated_jan_workbook_returns_summary(tmp_path):
     assert summary["staff_count"] > 0
     assert summary["entry_count"] > 0
     assert payload["schedule"]["entries"][0]["schedule_cell"] == "E7"
+
+
+def test_parse_multi_month_heritage_workbook_returns_month_variants(tmp_path):
+    workbook_path = save_multi_month_workbook(tmp_path / "Heritage Museum May 2026 Schedule.xlsx")
+    response = client().post(
+        "/api/parse",
+        data={
+            "schedule": (BytesIO(workbook_path.read_bytes()), workbook_path.name),
+            "project_profile": "heritage",
+        },
+        content_type="multipart/form-data",
+    )
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["ok"] is True
+    assert payload["selected_schedule_key"] == "__all__"
+    assert payload["inferred_schedule_key"] == "2026-05"
+    assert [item["key"] for item in payload["schedule_variants"]] == ["2026-04", "2026-05"]
+    assert [item["label"] for item in payload["schedule_variants"]] == ["April 2026", "May 2026"]
+    assert payload["schedule"]["project_profile"] == "heritage"
+    assert payload["schedule"].get("schedule_month", "") == ""
+    assert payload["summary"]["schedule_month_label"] == ""
+    assert payload["summary"]["date_count"] == 4
+    assert {entry["date"][:7] for entry in payload["schedule"]["entries"]} == {"2026-04", "2026-05"}
+
+    april = payload["schedule_variants"][0]
+    assert april["summary"]["schedule_month_label"] == "April 2026"
+    assert april["summary"]["date_count"] == 2
+    assert all(entry["date"].startswith("2026-04-") for entry in april["schedule"]["entries"])
+
+
+def test_parse_d_and_g_workbook_returns_multi_month_schedule(tmp_path):
+    workbook_path = save_d_and_g_workbook(tmp_path / "Habour City D&G Apr 2026 Invoice.xlsx")
+    response = client().post(
+        "/api/parse",
+        data={
+            "schedule": (BytesIO(workbook_path.read_bytes()), workbook_path.name),
+            "project_profile": "d_and_g",
+        },
+        content_type="multipart/form-data",
+    )
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["ok"] is True
+    assert payload["schedule"]["project_profile"] == "d_and_g"
+    assert payload["summary"]["layout_type"] == "d_and_g_job_applications"
+    assert payload["summary"]["date_count"] == 5
+    assert payload["summary"]["staff_count"] == 3
+    assert payload["summary"]["entry_count"] == 6
+    assert [item["key"] for item in payload["schedule_variants"]] == ["2026-04", "2026-05"]
+    may_shift = next(entry for entry in payload["schedule"]["entries"] if entry["raw_shift_code"] == "10:30-23:00")
+    assert may_shift["scheduled_in"] == "10:30"
+    assert may_shift["scheduled_out"] == "23:00"
