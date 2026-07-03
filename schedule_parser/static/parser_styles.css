@@ -941,7 +941,7 @@ h3 {
 }
 
 .dng-sheet-table {
-  min-width: 680px;
+  min-width: 860px;
   font-size: 12px;
 }
 
@@ -965,6 +965,72 @@ h3 {
 
 .dng-sheet-table select {
   background-color: #ffffff;
+}
+
+.dng-sheet-table tr.is-attended td {
+  background: #ecfdf3;
+}
+
+.dng-sheet-table tr.is-late td {
+  background: #fff8dc;
+}
+
+.dng-sheet-table tr.is-missing td {
+  background: #f8fafc;
+  color: #64748b;
+}
+
+.dng-sheet-table tr.is-unmatched td {
+  background: #fff7ed;
+}
+
+.dng-scheduled-cell {
+  min-width: 94px;
+  color: #475467;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.dng-status-pill {
+  display: inline-flex;
+  align-items: center;
+  max-width: 190px;
+  min-height: 22px;
+  padding: 2px 7px;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #334155;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1.2;
+  white-space: normal;
+}
+
+.dng-status-pill.attended,
+.dng-status-pill.manual {
+  border-color: #86efac;
+  background: #dcfce7;
+  color: #166534;
+}
+
+.dng-status-pill.late {
+  border-color: #fcd34d;
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.dng-status-pill.missing {
+  border-color: #cbd5e1;
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.dng-status-pill.unmatched {
+  border-color: #fdba74;
+  background: #ffedd5;
+  color: #9a3412;
 }
 
 .dng-sheet-table .danger {

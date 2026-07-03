@@ -331,6 +331,8 @@ def test_d_and_g_logsheet_review_is_one_sheet_at_a_time():
     assert "dngPreviewZoomInButton" in body
     assert "dngPreviewResetButton" in body
     assert "dngSheetRows" in body
+    assert "<th>Schedule</th>" in body
+    assert "<th>Status</th>" in body
     assert "OCR 目前工作紀錄" in script
     assert "function isDAndGProfile" in script
     assert "function renderDngSheetReview" in script
@@ -340,6 +342,14 @@ def test_d_and_g_logsheet_review_is_one_sheet_at_a_time():
     assert "function dngDateCandidates" in script
     assert "function dngTextSimilarityScore" in script
     assert "function dngDateSimilarityScore" in script
+    assert "function buildDngSheetReviewRows" in script
+    assert "function inferDngSheetDate" in script
+    assert "function dngScheduledEntriesForDate" in script
+    assert "function dngBestOcrMatchForEntry" in script
+    assert "function dngRecomputeSheetRowStatus" in script
+    assert "function dngSheetRowClass" in script
+    assert "function dngStatusBadgeHtml" in script
+    assert "if (!inTime && !outTime) return null;" in script
     assert "function zoomDngPreview" in script
     assert "function handleDngPreviewWheel" in script
     assert "function applyDngImageTransform" in script
@@ -359,6 +369,9 @@ def test_d_and_g_logsheet_review_is_one_sheet_at_a_time():
     assert ".dng-preview-tools" in styles
     assert ".dng-sheet-preview-stage.dragging" in styles
     assert ".dng-sheet-table select" in styles
+    assert ".dng-sheet-table tr.is-attended" in styles
+    assert ".dng-sheet-table tr.is-late" in styles
+    assert ".dng-status-pill" in styles
 
 
 def test_parse_without_file_returns_400_json():
