@@ -331,9 +331,11 @@ def test_d_and_g_logsheet_review_is_one_sheet_at_a_time():
     assert "dngPreviewZoomInButton" in body
     assert "dngPreviewResetButton" in body
     assert "dngSheetRows" in body
+    assert "dngOcrPendingButton" in body
     assert "<th>Schedule</th>" in body
     assert "<th>Status</th>" in body
-    assert "OCR 目前工作紀錄" in script
+    assert "使用 OpenRouter Qwen3.6 35B A3B 辨識 D&G" not in script
+    assert "OCR 未處理工作紀錄" in script
     assert "function isDAndGProfile" in script
     assert "function renderDngSheetReview" in script
     assert "function renderDngStaffSelect" in script
@@ -357,6 +359,13 @@ def test_d_and_g_logsheet_review_is_one_sheet_at_a_time():
     assert "function zoomDngPreview" in script
     assert "function handleDngPreviewWheel" in script
     assert "function applyDngImageTransform" in script
+    assert "function dngPendingOcrFiles" in script
+    assert "function ocrPendingDngSheets" in script
+    assert "function ocrDngSheetFile" in script
+    assert "Math.min(5, queue.length)" in script
+    assert "Promise.all(Array.from({ length: workerCount }, () => runWorker()))" in script
+    assert "OCR 完成 ${completed}/${total} 張" in script
+    assert "已保存 ${savedSheets}/${totalSheets} 張，已採用 ${rows.length} 筆" in script
     assert "function ocrCurrentDngSheet" in script
     assert "function saveDngCurrentSheet" in script
     assert "replaceDngOcrRowsForFile" in script
@@ -364,8 +373,9 @@ def test_d_and_g_logsheet_review_is_one_sheet_at_a_time():
     assert "必須選擇 Excel 內的日期" in script
     assert "activeLogsheetFileKey" in script
     assert "dngDraftRowsByFileKey" in script
+    assert "dngBatchBusy" in script
     assert "dngImageView" in script
-    assert "await ocrCurrentDngSheet()" in script
+    assert "ocrPendingDngSheets()" in script
     assert "state.ocr.daily_rows = mergeOcrDailyRows([...remainingRows, ...rows])" in script
     assert ".dng-sheet-workspace" in styles
     assert ".dng-sheet-file.is-active" in styles

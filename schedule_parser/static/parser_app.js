@@ -138,10 +138,10 @@ const PROJECT_PROFILES = {
     logStepLabel: "3 上傳工作紀錄",
     scheduleStepNote: "Excel 是 D&G Job Applications 排班資料來源。讀取後會進入檢查排班，先確認跨月份日期與時間再 OCR 工作紀錄相片。",
     ocrTitle: "D&G 工作紀錄 OCR",
-    ocrIntro: "使用 OpenRouter Qwen3.6 35B A3B 辨識 D&G 促銷員工作紀錄相片，支援一張相片內有多張表格。",
+    ocrIntro: "批次 OCR D&G 工作紀錄；完成的 sheet 可先審核及 Save，員工排班彙總會在 Save 後更新。",
     logUploadLabel: "上傳 D&G 工作紀錄圖片 / PDF",
     ocrPromptPlaceholder: "可選：補充月份年份，例如 April 2026；或說明相片內日期範圍。",
-    ocrButtonLabel: "OCR 目前工作紀錄",
+    ocrButtonLabel: "OCR 未處理工作紀錄",
     compareTitle: "排班 vs D&G 工作紀錄核對",
     sourceSidebarAriaLabel: "D&G 工作紀錄來源文件",
     assignmentEmptyText: "上傳 D&G 工作紀錄後，可在這裡把檔案指派到正確員工。",
@@ -186,6 +186,7 @@ const state = {
   dngSheetRows: [],
   dngDraftRowsByFileKey: {},
   dngSheetBusy: false,
+  dngBatchBusy: false,
   dngImageView: { x: 0, y: 0, scale: 1 },
   dngImageDrag: null,
   rosterImageView: { x: 0, y: 0, scale: 1 },
@@ -249,6 +250,7 @@ const els = {
   dngPrevSheet: document.getElementById("dngPrevSheetButton"),
   dngNextSheet: document.getElementById("dngNextSheetButton"),
   dngOcrCurrent: document.getElementById("dngOcrCurrentButton"),
+  dngOcrPending: document.getElementById("dngOcrPendingButton"),
   dngSaveSheet: document.getElementById("dngSaveSheetButton"),
   dngAddRow: document.getElementById("dngAddRowButton"),
   dngSheetRows: document.getElementById("dngSheetRows"),
@@ -366,6 +368,7 @@ els.dngSheetFileList?.addEventListener("click", handleDngSheetFileClick);
 els.dngPrevSheet?.addEventListener("click", () => shiftDngSheet(-1));
 els.dngNextSheet?.addEventListener("click", () => shiftDngSheet(1));
 els.dngOcrCurrent?.addEventListener("click", ocrCurrentDngSheet);
+els.dngOcrPending?.addEventListener("click", ocrPendingDngSheets);
 els.dngSaveSheet?.addEventListener("click", saveDngCurrentSheet);
 els.dngAddRow?.addEventListener("click", addDngSheetRow);
 els.dngSheetRows?.addEventListener("input", handleDngSheetRowsInput);
@@ -563,7 +566,7 @@ function updateWorkflowState() {
     els.confirmSchedule.disabled = !state.schedule;
     els.confirmSchedule.textContent = state.scheduleConfirmed ? "排班表已確認" : "確認排班表";
   }
-  els.ocr.disabled = !state.scheduleConfirmed;
+  els.ocr.disabled = !state.scheduleConfirmed || (isDAndGProfile() && state.dngBatchBusy);
   els.compareButton.disabled = !state.schedule || !ocrRows().length;
 }
 
@@ -640,7 +643,7 @@ async function ocrSelectedLogsheet() {
   }
   rememberLogsheetFiles(files);
   if (isDAndGProfile()) {
-    await ocrCurrentDngSheet();
+    ocrPendingDngSheets();
     return;
   }
   const extraPrompt = els.ocrPrompt.value.trim();
@@ -939,13 +942,15 @@ function renderDngSheetReview() {
 
   const activeFile = activeDngLogsheetFile();
   const activeIndex = activeFile ? files.findIndex((file) => logsheetFileKey(file.name) === state.activeLogsheetFileKey) : -1;
+  const activeFileIsOcr = activeFile?.ocrStatus === "OCR";
   const currentLabel = activeIndex >= 0 ? `${activeIndex + 1} / ${files.length}` : "0 / 0";
   if (els.dngSheetStatus) els.dngSheetStatus.textContent = currentLabel;
   if (els.dngPrevSheet) els.dngPrevSheet.disabled = state.dngSheetBusy || activeIndex <= 0;
   if (els.dngNextSheet) els.dngNextSheet.disabled = state.dngSheetBusy || activeIndex < 0 || activeIndex >= files.length - 1;
-  if (els.dngOcrCurrent) els.dngOcrCurrent.disabled = state.dngSheetBusy || !activeFile;
-  if (els.dngSaveSheet) els.dngSaveSheet.disabled = state.dngSheetBusy || !activeFile;
-  if (els.dngAddRow) els.dngAddRow.disabled = state.dngSheetBusy || !activeFile;
+  if (els.dngOcrCurrent) els.dngOcrCurrent.disabled = state.dngSheetBusy || activeFileIsOcr || !activeFile;
+  if (els.dngOcrPending) els.dngOcrPending.disabled = state.dngSheetBusy || state.dngBatchBusy || !dngPendingOcrFiles().length;
+  if (els.dngSaveSheet) els.dngSaveSheet.disabled = state.dngSheetBusy || activeFileIsOcr || !activeFile;
+  if (els.dngAddRow) els.dngAddRow.disabled = state.dngSheetBusy || activeFileIsOcr || !activeFile;
 
   renderDngSheetFileList(files);
   renderDngSheetPreview(activeFile);
@@ -1600,6 +1605,120 @@ function addDngSheetRow() {
   state.dngSheetRows.push(createDngBlankSheetRow(file.name));
   state.dngDraftRowsByFileKey[state.activeLogsheetFileKey] = state.dngSheetRows.map((row) => ({ ...row }));
   renderDngSheetRows();
+}
+
+function dngPendingOcrFiles() {
+  return (state.logsheetFiles || []).filter((file) => (
+    !file.reviewSaved
+    && file.ocrStatus !== "Ready"
+    && file.ocrStatus !== "OCR"
+    && file.ocrStatus !== "Saved"
+  ));
+}
+
+async function ocrDngSheetFile(fileKey) {
+  const fileRecord = logsheetFileByKey(fileKey);
+  if (!fileRecord) throw new Error("找不到這張 D&G 工作紀錄。");
+  const file = logsheetInputFileByKey(fileKey);
+  if (!file) throw new Error(`${fileRecord.name} 的原始檔案不在目前上傳清單，請重新選擇檔案。`);
+
+  const extraPrompt = els.ocrPrompt.value.trim();
+  setDngFileState(fileKey, { ocrStatus: "OCR", ocrError: "", reviewSaved: false });
+  renderDngSheetReview();
+
+  const result = await ocrSingleFile(file, extraPrompt);
+  const rawRows = rowsFromOcrResult(result).map((row) => ({
+    ...row,
+    source_filename: row.source_filename || file.name,
+    source_filenames: row.source_filenames || [file.name],
+  }));
+  const rows = buildDngSheetReviewRows(rawRows, file.name);
+  const status = rawRows.length || rows.length ? "Ready" : "No data";
+  setDngFileState(fileKey, {
+    ocrStatus: status,
+    ocrRows: rows.length,
+    ocrResult: result,
+    ocrDailyRows: rawRows,
+    ocrError: "",
+    reviewSaved: false,
+  });
+  if (state.activeLogsheetFileKey === fileKey) {
+    state.dngSheetRows = rows;
+    state.dngDraftRowsByFileKey[fileKey] = rows.map((row) => ({ ...row }));
+  }
+  renderDngSheetReview();
+  renderLogsheetAssignments();
+  return { file: fileRecord, rows, rowCount: rows.length };
+}
+
+async function ocrPendingDngSheets() {
+  if (!state.schedule || !state.scheduleConfirmed) {
+    setStatus("請先讀取並確認排班，才可 OCR D&G 工作紀錄。", true);
+    setWorkflowStep(state.schedule ? "check-schedule" : "schedule-upload");
+    return;
+  }
+  const inputFiles = Array.from(els.logsheetFile?.files || []);
+  if (!inputFiles.length) {
+    setStatus(currentProjectProfile().noFileMessage, true);
+    return;
+  }
+  if (!(state.logsheetFiles || []).length) rememberLogsheetFiles(inputFiles);
+  const pendingFiles = dngPendingOcrFiles();
+  if (!pendingFiles.length) {
+    setStatus("沒有未處理的 D&G 工作紀錄；可審核已完成 OCR 的 sheet，或用單張 OCR 重跑。");
+    renderDngSheetReview();
+    return;
+  }
+
+  ensureDngOcrAggregate();
+  state.dngBatchBusy = true;
+  const total = pendingFiles.length;
+  let completed = 0;
+  let failed = 0;
+  let ready = 0;
+  const queue = pendingFiles.map((file) => logsheetFileKey(file.name));
+  const workerCount = Math.min(5, queue.length);
+  showOcrProgress(total);
+  setOcrProgress(0, total, `D&G OCR 0 / ${total}`);
+  if (els.ocrMeta) els.ocrMeta.textContent = `OCR 中：0/${total} 張；完成後可逐張審核及 Save`;
+  setStatus(`開始 D&G 批次 OCR：${total} 張，最多 ${workerCount} 張同步。`);
+  renderDngSheetReview();
+  updateWorkflowState();
+
+  async function runWorker() {
+    while (queue.length) {
+      const fileKey = queue.shift();
+      const fileRecord = logsheetFileByKey(fileKey);
+      if (!fileRecord) continue;
+      markOcrProgressItem(fileRecord.name, "running", "OCR 中");
+      try {
+        const result = await ocrDngSheetFile(fileKey);
+        ready += result.rowCount ? 1 : 0;
+        markOcrProgressItem(fileRecord.name, result.rowCount ? "done" : "no-data", result.rowCount ? `${result.rowCount} rows，可審核` : "沒有 OCR rows，可重跑或手動新增");
+      } catch (error) {
+        failed += 1;
+        const message = error.message || String(error);
+        setDngFileState(fileKey, { ocrStatus: "Failed", ocrError: message, reviewSaved: false });
+        markOcrProgressItem(fileRecord.name, "error", message);
+      } finally {
+        completed += 1;
+        setOcrProgress(completed, total, `D&G OCR ${completed} / ${total}`);
+        if (els.ocrMeta) els.ocrMeta.textContent = `OCR 完成 ${completed}/${total} 張；已保存 ${(state.logsheetFiles || []).filter((file) => file.reviewSaved).length} 張`;
+        renderDngSheetReview();
+        updateWorkflowState();
+      }
+    }
+  }
+
+  try {
+    await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+    const failedText = failed ? `，${failed} 張失敗` : "";
+    setStatus(`D&G 批次 OCR 完成：${ready} 張可審核${failedText}。Save 後會更新員工排班彙總。`, Boolean(failed));
+  } finally {
+    state.dngBatchBusy = false;
+    renderDngSheetReview();
+    updateWorkflowState();
+  }
 }
 
 async function ocrCurrentDngSheet() {
@@ -2375,11 +2494,16 @@ function renderOcrResult() {
     clearOcrResult();
     return;
   }
-  const source = state.ocr.source_filename || "logsheet";
-  const model = state.ocr.response_model || state.ocr.configured_model || "";
-  const hasStructuredJson = Boolean(state.ocr.structured);
   const rows = ocrRows();
-  els.ocrMeta.textContent = `${source}${model ? " · " + model : ""}${hasStructuredJson ? " · 已解析 JSON" : " · 原文輸出"} · ${rows.length} 筆`;
+  if (isDAndGProfile()) {
+    const totalSheets = (state.logsheetFiles || []).length;
+    const savedSheets = (state.logsheetFiles || []).filter((file) => file.reviewSaved).length;
+    els.ocrMeta.textContent = totalSheets
+      ? `已保存 ${savedSheets}/${totalSheets} 張，已採用 ${rows.length} 筆`
+      : `已採用 ${rows.length} 筆`;
+  } else {
+    els.ocrMeta.textContent = `OCR 完成：${rows.length} 筆`;
+  }
   renderOcrTable(rows);
   renderLogsheetAssignments();
   renderDngSheetReview();
