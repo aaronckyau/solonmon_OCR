@@ -43,10 +43,11 @@ def create_app() -> Flask:
     app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1, x_prefix=1)
     app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES
     app.config["SCHEDULE_PARSER_DEBUG"] = os.getenv("SCHEDULE_PARSER_DEBUG") == "1"
+    app.config["ASSET_VERSION"] = _asset_version(app.static_folder)
 
     @app.get("/")
     def index():
-        return render_template("parser_index.html")
+        return render_template("parser_index.html", asset_version=app.config["ASSET_VERSION"])
 
     @app.get("/health")
     def health():
@@ -198,6 +199,22 @@ def _allowed_filename(filename: str) -> bool:
 def _allowed_ocr_filename(filename: str) -> bool:
     lower = filename.lower()
     return any(lower.endswith(ext) for ext in OCR_ALLOWED_EXTENSIONS)
+
+
+def _asset_version(static_folder: str | None) -> str:
+    configured = os.getenv("SOLOMONSCAN_ASSET_VERSION") or os.getenv("APP_VERSION")
+    if configured:
+        return re.sub(r"[^A-Za-z0-9_.-]", "", configured) or "configured"
+    if not static_folder:
+        return "dev"
+    try:
+        mtimes = [
+            os.path.getmtime(os.path.join(static_folder, filename))
+            for filename in ("parser_app.js", "parser_styles.css")
+        ]
+    except OSError:
+        return "dev"
+    return str(int(max(mtimes)))
 
 
 def _project_profile_from_request() -> str:

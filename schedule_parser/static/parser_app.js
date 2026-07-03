@@ -141,7 +141,7 @@ const PROJECT_PROFILES = {
     ocrIntro: "批次 OCR D&G 工作紀錄；完成的 sheet 可先審核及 Save，員工排班彙總會在 Save 後更新。",
     logUploadLabel: "上傳 D&G 工作紀錄圖片 / PDF",
     ocrPromptPlaceholder: "可選：補充月份年份，例如 April 2026；或說明相片內日期範圍。",
-    ocrButtonLabel: "OCR 未處理工作紀錄",
+    ocrButtonLabel: "OCR 未處理工作紀錄（最多 5 張同步）",
     compareTitle: "排班 vs D&G 工作紀錄核對",
     sourceSidebarAriaLabel: "D&G 工作紀錄來源文件",
     assignmentEmptyText: "上傳 D&G 工作紀錄後，可在這裡把檔案指派到正確員工。",
@@ -1820,11 +1820,11 @@ async function saveDngCurrentSheet() {
   const nextFile = nextDngFileToReview(fileKey);
   if (nextFile) {
     selectDngLogsheetFile(logsheetFileKey(nextFile.name));
-    setStatus(`已 Save ${file.name}，請處理下一張：${nextFile.name}`);
+    setStatus(`已 Save ${file.name}，員工排班彙總已更新；請處理下一張：${nextFile.name}`);
   } else {
     renderDngSheetReview();
     if (ocrRows().length) setWorkflowStep("manage-schedule");
-    setStatus(`已 Save ${file.name}。D&G 工作紀錄已逐張處理完成。`);
+    setStatus(`已 Save ${file.name}，員工排班彙總已更新。D&G 工作紀錄已逐張處理完成。`);
   }
 }
 
@@ -1893,6 +1893,7 @@ function normalizeDngSheetRowsForSave(rows, filename) {
         out: outTime || null,
         source_filename: filename,
         source_filenames: [filename],
+        source_row_index: index,
         all_times: [inTime, outTime].filter(Boolean).sort(compareTimes),
         original_name: row.originalName || null,
         warnings: ["D&G 逐張覆核"],
@@ -1905,7 +1906,7 @@ function replaceDngOcrRowsForFile(fileKey, rows, result) {
   if (!state.ocr) return;
   ensureOcrAggregateShape();
   const remainingRows = ocrRows().filter((row) => !ocrRowFileKeys(row).has(fileKey));
-  state.ocr.daily_rows = mergeOcrDailyRows([...remainingRows, ...rows]);
+  state.ocr.daily_rows = [...remainingRows, ...rows];
   state.ocr.results = (state.ocr.results || []).filter((item) => !ocrResultMatchesFileKey(item, fileKey));
   if (result) {
     const manualResult = {

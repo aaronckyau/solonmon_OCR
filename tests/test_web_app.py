@@ -42,7 +42,8 @@ def test_index_sets_api_base_from_script_root():
     forwarded_body = forwarded_prefix_response.get_data(as_text=True)
     assert forwarded_prefix_response.status_code == 200
     assert 'data-api-base="/solomonscan"' in forwarded_body
-    assert 'href="/solomonscan/static/parser_styles.css"' in forwarded_body
+    assert 'href="/solomonscan/static/parser_styles.css?v=' in forwarded_body
+    assert 'src="/solomonscan/static/parser_app.js?v=' in forwarded_body
 
 
 def test_index_renders_upload_page():
@@ -335,7 +336,7 @@ def test_d_and_g_logsheet_review_is_one_sheet_at_a_time():
     assert "<th>Schedule</th>" in body
     assert "<th>Status</th>" in body
     assert "使用 OpenRouter Qwen3.6 35B A3B 辨識 D&G" not in script
-    assert "OCR 未處理工作紀錄" in script
+    assert "OCR 未處理工作紀錄（最多 5 張同步）" in script
     assert "function isDAndGProfile" in script
     assert "function renderDngSheetReview" in script
     assert "function renderDngStaffSelect" in script
@@ -376,7 +377,8 @@ def test_d_and_g_logsheet_review_is_one_sheet_at_a_time():
     assert "dngBatchBusy" in script
     assert "dngImageView" in script
     assert "ocrPendingDngSheets()" in script
-    assert "state.ocr.daily_rows = mergeOcrDailyRows([...remainingRows, ...rows])" in script
+    assert "state.ocr.daily_rows = [...remainingRows, ...rows]" in script
+    assert "OCR 未處理（最多 5 張同步）" in body
     assert ".dng-sheet-workspace" in styles
     assert ".dng-sheet-file.is-active" in styles
     assert ".workbench-step.ocr-panel" in styles
