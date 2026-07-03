@@ -343,11 +343,19 @@ def test_d_and_g_logsheet_review_is_one_sheet_at_a_time():
     assert "function renderDngDateSelect" in script
     assert "function dngStaffCandidates" in script
     assert "function dngDateCandidates" in script
+    assert "function dngFilenameScheduleDate" in script
+    assert "function dngFilenameDateCandidates" in script
+    assert "function compareDngLogsheetFiles" in script
+    assert "state.logsheetFiles.sort(compareDngLogsheetFiles)" in script
+    assert "檔名日期" in script
     assert "function dngTextSimilarityScore" in script
     assert "function dngDateSimilarityScore" in script
     assert "function buildDngSheetReviewRows" in script
     assert "function inferDngSheetDate" in script
+    assert "const filenameDate = dngFilenameScheduleDate(filename)" in script
     assert "function dngReviewRowFromOcrRow" in script
+    assert "function dngOcrRowDateInfo" in script
+    assert "已以檔名為準" in script
     assert "function dngBestScheduledMatchForOcrRow" in script
     assert "function dngApplyScheduleHintToRow" in script
     assert "function dngScheduledEntriesForDate" in script
@@ -387,8 +395,10 @@ def test_d_and_g_logsheet_review_is_one_sheet_at_a_time():
     assert ".dng-sheet-table select" in styles
     assert ".dng-sheet-table tr.is-attended" in styles
     assert ".dng-sheet-table tr.is-late" in styles
+    assert ".dng-sheet-table tr.is-date-warning" in styles
     assert ".dng-sheet-table tr.is-no-time" in styles
     assert ".dng-status-pill" in styles
+    assert ".dng-status-pill.date_warning" in styles
 
 
 def test_parse_without_file_returns_400_json():

@@ -848,9 +848,11 @@ function rememberLogsheetFiles(files) {
   const previousFiles = new Map((state.logsheetFiles || [])
     .map((file) => [logsheetFileKey(file.name), file]));
   revokeLogsheetFileUrls();
-  state.logsheetFiles = files.map((file) => ({
+  state.logsheetFiles = files.map((file, uploadOrder) => ({
     name: file.name,
     type: file.type || "",
+    inferredDate: dngFilenameScheduleDate(file.name),
+    uploadOrder,
     assignedStaff: previousFiles.get(logsheetFileKey(file.name))?.assignedStaff || "",
     ocrStatus: previousFiles.get(logsheetFileKey(file.name))?.ocrStatus || "Uploaded",
     ocrRows: previousFiles.get(logsheetFileKey(file.name))?.ocrRows || 0,
@@ -861,6 +863,7 @@ function rememberLogsheetFiles(files) {
     previewUrl: isPreviewableLogsheetImage(file) ? URL.createObjectURL(file) : "",
   }));
   if (isDAndGProfile()) {
+    state.logsheetFiles.sort(compareDngLogsheetFiles);
     syncDngOcrAggregateForFiles(files);
     if (!logsheetFileByKey(state.activeLogsheetFileKey)) {
       state.activeLogsheetFileKey = state.logsheetFiles[0] ? logsheetFileKey(state.logsheetFiles[0].name) : "";
@@ -875,6 +878,26 @@ function isPreviewableLogsheetImage(file) {
   const mimeType = String(file?.type || "").toLowerCase();
   if (mimeType.startsWith("image/")) return true;
   return /\.(jpe?g|png|webp)$/i.test(String(file?.name || ""));
+}
+
+function compareDngLogsheetFiles(left, right) {
+  const leftDate = left.inferredDate || "";
+  const rightDate = right.inferredDate || "";
+  if (leftDate && rightDate && leftDate !== rightDate) return leftDate.localeCompare(rightDate);
+  if (leftDate && !rightDate) return -1;
+  if (!leftDate && rightDate) return 1;
+  const nameCompare = dngNaturalCompare(left.name, right.name);
+  if (nameCompare) return nameCompare;
+  return Number(left.uploadOrder || 0) - Number(right.uploadOrder || 0);
+}
+
+function dngNaturalCompare(left, right) {
+  return String(left || "").localeCompare(String(right || ""), undefined, { numeric: true, sensitivity: "base" });
+}
+
+function dngLogsheetFileDateLabel(file) {
+  const date = file?.inferredDate || dngFilenameScheduleDate(file?.name || "");
+  return date ? `檔名日期 ${formatDngScheduleDateOption(date)}` : "日期未確認";
 }
 
 function renderLogsheetAssignments() {
@@ -968,12 +991,13 @@ function renderDngSheetFileList(files) {
     const active = key === state.activeLogsheetFileKey;
     const rowCount = Number(file.ocrRows || ocrRowsForFileKey(key).length || 0);
     const status = dngSheetStatusLabel(file, rowCount);
+    const dateLabel = dngLogsheetFileDateLabel(file);
     return `
       <button type="button" class="dng-sheet-file${active ? " is-active" : ""}${file.reviewSaved ? " is-saved" : ""}" data-dng-sheet-key="${escapeAttr(key)}">
         <span class="dng-sheet-file-index">${index + 1}</span>
         <span class="dng-sheet-file-main">
           <strong>${escapeHtml(file.name)}</strong>
-          <small>${escapeHtml(status)} · ${rowCount} rows</small>
+          <small>${escapeHtml(dateLabel)} · ${escapeHtml(status)} · ${rowCount} rows</small>
         </span>
       </button>
     `;
@@ -983,7 +1007,7 @@ function renderDngSheetFileList(files) {
 function renderDngSheetPreview(file) {
   if (els.dngSheetPreviewTitle) els.dngSheetPreviewTitle.textContent = file?.name || "未選擇";
   if (els.dngSheetPreviewMeta) {
-    const meta = file ? `${dngSheetStatusLabel(file, Number(file.ocrRows || 0))} · ${file.previewUrl ? "圖片預覽" : "沒有圖片預覽"}` : "上傳後選擇一張";
+    const meta = file ? `${dngLogsheetFileDateLabel(file)} · ${dngSheetStatusLabel(file, Number(file.ocrRows || 0))} · ${file.previewUrl ? "圖片預覽" : "沒有圖片預覽"}` : "上傳後選擇一張";
     els.dngSheetPreviewMeta.textContent = meta;
   }
   if (!els.dngSheetPreviewImage || !els.dngSheetPreviewEmpty) return;
@@ -1089,6 +1113,91 @@ function dngSelectedScheduleDate(rawDate, filename = "", candidates = dngDateCan
   return best && best.score > 0 ? best.value : "";
 }
 
+function dngFilenameScheduleDate(filename = "") {
+  return dngFilenameDateCandidates(filename)[0]?.value || "";
+}
+
+function dngFilenameDateCandidates(filename = "") {
+  const scheduleDates = scheduleDateValues();
+  if (!scheduleDates.length) return [];
+  const parsed = dngParsedFilenameDateHints(filename);
+  const candidates = [];
+  const seen = new Set();
+  const addCandidate = (date, score) => {
+    if (!date || seen.has(date)) return;
+    seen.add(date);
+    candidates.push({ value: date, score });
+  };
+
+  parsed.forEach((hint) => {
+    scheduleDates.forEach((date) => {
+      const match = String(date || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (!match) return;
+      const [, year, month, day] = match.map(String);
+      if (hint.year && Number(year) !== hint.year) return;
+      if (Number(month) !== hint.month || Number(day) !== hint.day) return;
+      addCandidate(date, hint.score + (hint.year ? 30 : 0));
+    });
+  });
+
+  return candidates.sort((left, right) => right.score - left.score || left.value.localeCompare(right.value));
+}
+
+function dngParsedFilenameDateHints(filename = "") {
+  const raw = String(filename || "")
+    .split(/[\\/]/)
+    .pop()
+    .replace(/\.[^.]+$/, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/[()[\]]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+  if (!raw) return [];
+  const hints = [];
+  const addHint = (day, month, year, score) => {
+    const cleanDay = Number(day);
+    const cleanMonth = Number(month);
+    const cleanYear = year ? Number(year) : null;
+    if (!Number.isInteger(cleanDay) || cleanDay < 1 || cleanDay > 31) return;
+    if (!Number.isInteger(cleanMonth) || cleanMonth < 1 || cleanMonth > 12) return;
+    if (cleanYear && (cleanYear < 2000 || cleanYear > 2099)) return;
+    hints.push({ day: cleanDay, month: cleanMonth, year: cleanYear, score });
+  };
+
+  for (const match of raw.matchAll(/\b(20\d{2})\s*(\d{2})\s*(\d{2})\b/g)) {
+    addHint(match[3], match[2], match[1], 120);
+  }
+  for (const match of raw.matchAll(/\b(20\d{2})[./\s-]+(\d{1,2})[./\s-]+(\d{1,2})\b/g)) {
+    addHint(match[3], match[2], match[1], 115);
+  }
+  for (const match of raw.matchAll(/\b(\d{1,2})(?:st|nd|rd|th)?(?:\s*(?:and|&|to)\s*\d{1,2}(?:st|nd|rd|th)?)?\s+([a-z]{3,9})(?:\s+(20\d{2}))?\b/g)) {
+    const month = dngMonthNumber(match[2]);
+    if (month) addHint(match[1], month, match[3], 100);
+  }
+  for (const match of raw.matchAll(/\b([a-z]{3,9})\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s+(20\d{2}))?\b/g)) {
+    const month = dngMonthNumber(match[1]);
+    if (month) addHint(match[2], month, match[3], 92);
+  }
+  for (const match of raw.matchAll(/\b(\d{1,2})[./\s-]+(\d{1,2})(?:[./\s-]+(20\d{2}))?\b/g)) {
+    const first = Number(match[1]);
+    const second = Number(match[2]);
+    if (first > 12 && second <= 12) addHint(first, second, match[3], 62);
+    if (second > 12 && first <= 12) addHint(second, first, match[3], 58);
+  }
+  return hints;
+}
+
+function dngMonthNumber(value) {
+  const months = {
+    jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3, apr: 4, april: 4,
+    may: 5, jun: 6, june: 6, jul: 7, july: 7, aug: 8, august: 8, sep: 9,
+    sept: 9, september: 9, oct: 10, october: 10, nov: 11, november: 11,
+    dec: 12, december: 12,
+  };
+  return months[String(value || "").toLowerCase()] || 0;
+}
+
 function formatDngScheduleDateOption(date) {
   const match = String(date || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!match) return String(date || "");
@@ -1128,6 +1237,7 @@ function dngDateSimilarityScore(rawDate, filename, candidateDate) {
   const raw = String(rawDate || "").trim();
   if (raw === candidateDate) score += 100;
   if (alignOcrDateToSchedule(raw) === candidateDate) score += 90;
+  if (dngFilenameScheduleDate(filename) === candidateDate) score += 300;
   const rawHints = dngDateHints(raw);
   const fileHints = dngDateHints(filename);
   if (rawHints.years.has(Number(candidateYear))) score += 22;
@@ -1182,6 +1292,8 @@ function buildDngSheetReviewRows(rawRows, filename, forcedDate = "") {
 function inferDngSheetDate(rawRows, filename = "") {
   const scheduleDates = scheduleDateValues();
   if (!scheduleDates.length) return "";
+  const filenameDate = dngFilenameScheduleDate(filename);
+  if (filenameDate) return filenameDate;
   const candidates = scheduleDates.map((date) => {
     const rowScores = (rawRows || []).map((row) => dngDateSimilarityScore(row?.date || "", filename, date));
     return {
@@ -1193,7 +1305,9 @@ function inferDngSheetDate(rawRows, filename = "") {
 }
 
 function dngReviewRowFromOcrRow(row, sheetDate, filename, usedScheduleKeys, index) {
-  const rowDate = dngOcrRowDate(row, sheetDate, filename);
+  const rowDateInfo = dngOcrRowDateInfo(row, sheetDate, filename);
+  const rowDate = rowDateInfo.date;
+  const warnings = [...(row.warnings || []), ...rowDateInfo.warnings];
   const scheduledEntries = dngScheduledEntriesForDate(rowDate);
   const match = dngBestScheduledMatchForOcrRow(row, scheduledEntries, usedScheduleKeys);
   if (match) {
@@ -1211,6 +1325,7 @@ function dngReviewRowFromOcrRow(row, sheetDate, filename, usedScheduleKeys, inde
       isOcrRow: true,
       source_filename: row.source_filename || filename,
       source_filenames: row.source_filenames || [filename],
+      warnings,
       ocrRowIndex: index,
     });
   }
@@ -1227,16 +1342,21 @@ function dngReviewRowFromOcrRow(row, sheetDate, filename, usedScheduleKeys, inde
     isOcrRow: true,
     source_filename: row.source_filename || filename,
     source_filenames: row.source_filenames || [filename],
+    warnings,
     ocrRowIndex: index,
   });
 }
 
-function dngOcrRowDate(row, sheetDate, filename) {
+function dngOcrRowDateInfo(row, sheetDate, filename) {
   const rawDate = display(row?.date).trim();
   const alignedDate = alignOcrDateToSchedule(rawDate);
-  if (alignedDate && scheduleDateValues().includes(alignedDate)) return alignedDate;
   const selectedDate = dngSelectedScheduleDate(rawDate, filename);
-  return selectedDate || sheetDate || rawDate;
+  const date = sheetDate || selectedDate || alignedDate || rawDate;
+  const warnings = [];
+  if (sheetDate && alignedDate && scheduleDateValues().includes(alignedDate) && alignedDate !== sheetDate) {
+    warnings.push(`OCR 日期 ${formatDngScheduleDateOption(alignedDate)} 與檔名日期 ${formatDngScheduleDateOption(sheetDate)} 不一致，已以檔名為準`);
+  }
+  return { date, warnings };
 }
 
 function dngBestScheduledMatchForOcrRow(row, entries, usedScheduleKeys) {
@@ -1391,6 +1511,7 @@ function dngScheduledText(row) {
 }
 
 function dngSheetRowClass(row) {
+  if ((row.warnings || []).some((warning) => String(warning).includes("檔名日期"))) return "is-date-warning";
   const status = row.matchStatus || "";
   if (status === "late") return "is-late";
   if (status === "attended" || status === "manual") return "is-attended";
@@ -1409,7 +1530,11 @@ function dngStatusBadgeHtml(row) {
   if (status === "missing") label = "未在此張找到";
   if (status === "unmatched") label = row.originalName ? `需選員工：${row.originalName}` : "需手動選員工";
   if (status === "manual") label = "手動配對";
-  return `<span class="dng-status-pill ${escapeAttr(status || "pending")}">${escapeHtml(label)}</span>`;
+  const warningText = (row.warnings || []).find((warning) => String(warning).includes("檔名日期")) || "";
+  const warningClass = warningText ? " date_warning" : "";
+  const title = warningText ? ` title="${escapeAttr(warningText)}"` : "";
+  const visibleLabel = warningText ? `${label} · 日期需覆核` : label;
+  return `<span class="dng-status-pill ${escapeAttr(status || "pending")}${warningClass}"${title}>${escapeHtml(visibleLabel)}</span>`;
 }
 
 function zoomDngPreview(factor) {
@@ -1866,6 +1991,7 @@ function dngEditableRowFromOcrRow(row) {
     ocrRowIndex: Number(row?.ocrRowIndex ?? row?.ocr_row_index ?? -1),
     source_filename: display(row?.source_filename).trim(),
     source_filenames: sourceFilenames,
+    warnings: Array.isArray(row?.warnings) ? row.warnings.map((item) => String(item)).filter(Boolean) : [],
   };
 }
 

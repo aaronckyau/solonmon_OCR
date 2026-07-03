@@ -975,6 +975,10 @@ h3 {
   background: #fff8dc;
 }
 
+.dng-sheet-table tr.is-date-warning td {
+  background: #fff8dc;
+}
+
 .dng-sheet-table tr.is-missing td {
   background: #f8fafc;
   color: #64748b;
@@ -1039,6 +1043,12 @@ h3 {
 
 .dng-status-pill.no_time {
   border-color: #fbbf24;
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.dng-status-pill.date_warning {
+  border-color: #f59e0b;
   background: #fef3c7;
   color: #92400e;
 }
