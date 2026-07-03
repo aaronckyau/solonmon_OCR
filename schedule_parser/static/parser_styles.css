@@ -288,6 +288,11 @@ html {
   margin-left: calc(50% - min(920px, calc(50vw - 12px)));
 }
 
+.workbench-step.ocr-panel {
+  width: min(1920px, calc(100vw - 24px));
+  margin-left: calc(50% - min(960px, calc(50vw - 12px)));
+}
+
 .step-head {
   display: flex;
   align-items: center;
@@ -771,9 +776,9 @@ h3 {
 
 .dng-sheet-workspace {
   display: grid;
-  grid-template-columns: minmax(190px, 240px) minmax(260px, 0.85fr) minmax(420px, 1.35fr);
+  grid-template-columns: minmax(210px, 280px) minmax(420px, 1fr) minmax(620px, 1.18fr);
   gap: 0;
-  min-height: 420px;
+  min-height: 520px;
 }
 
 .dng-sheet-files,
@@ -864,11 +869,39 @@ h3 {
 .dng-sheet-file-main strong,
 .dng-sheet-preview-head strong,
 .dng-sheet-table-head strong {
+  display: block;
   overflow: hidden;
   color: var(--text-strong);
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.dng-sheet-preview-head > div:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.dng-preview-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+}
+
+.dng-preview-tools button {
+  min-width: 34px;
+  min-height: 30px;
+  padding: 5px 8px;
+}
+
+.dng-preview-tools span {
+  min-width: 44px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-align: center;
 }
 
 .dng-sheet-file-main small {
@@ -880,8 +913,9 @@ h3 {
 .dng-sheet-preview-stage {
   display: grid;
   place-items: center;
-  height: 390px;
+  height: 470px;
   overflow: auto;
+  touch-action: none;
   background:
     linear-gradient(#eef2f6 1px, transparent 1px),
     linear-gradient(90deg, #eef2f6 1px, transparent 1px),
@@ -889,18 +923,25 @@ h3 {
   background-size: 24px 24px;
 }
 
+.dng-sheet-preview-stage.dragging {
+  cursor: grabbing;
+}
+
 .dng-sheet-preview-stage img {
   max-width: 100%;
   max-height: 100%;
+  cursor: grab;
   object-fit: contain;
+  transform-origin: center center;
+  will-change: transform;
 }
 
 .dng-sheet-table-wrap {
-  max-height: 390px;
+  max-height: 470px;
 }
 
 .dng-sheet-table {
-  min-width: 560px;
+  min-width: 680px;
   font-size: 12px;
 }
 
@@ -914,11 +955,16 @@ h3 {
   width: 66px;
 }
 
-.dng-sheet-table input {
+.dng-sheet-table input,
+.dng-sheet-table select {
   width: 100%;
   min-height: 30px;
   padding: 5px 6px;
   font-size: 12px;
+}
+
+.dng-sheet-table select {
+  background-color: #ffffff;
 }
 
 .dng-sheet-table .danger {

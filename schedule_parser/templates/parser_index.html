@@ -269,8 +269,16 @@
             </aside>
             <section class="dng-sheet-preview-card">
               <div class="dng-sheet-preview-head">
-                <strong id="dngSheetPreviewTitle">未選擇</strong>
-                <small id="dngSheetPreviewMeta">上傳後選擇一張</small>
+                <div>
+                  <strong id="dngSheetPreviewTitle">未選擇</strong>
+                  <small id="dngSheetPreviewMeta">上傳後選擇一張</small>
+                </div>
+                <div class="dng-preview-tools" aria-label="D&G 圖片縮放">
+                  <button id="dngPreviewZoomOutButton" type="button" class="secondary" title="縮小" aria-label="縮小">-</button>
+                  <span id="dngPreviewZoomValue">100%</span>
+                  <button id="dngPreviewZoomInButton" type="button" class="secondary" title="放大" aria-label="放大">+</button>
+                  <button id="dngPreviewResetButton" type="button" class="secondary" title="重設縮放" aria-label="重設縮放">100%</button>
+                </div>
               </div>
               <div id="dngSheetPreviewStage" class="dng-sheet-preview-stage">
                 <img id="dngSheetPreviewImage" alt="D&G 工作紀錄預覽" hidden>

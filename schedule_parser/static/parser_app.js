@@ -186,6 +186,8 @@ const state = {
   dngSheetRows: [],
   dngDraftRowsByFileKey: {},
   dngSheetBusy: false,
+  dngImageView: { x: 0, y: 0, scale: 1 },
+  dngImageDrag: null,
   rosterImageView: { x: 0, y: 0, scale: 1 },
   rosterImageDrag: null,
   rosterImageFileName: "",
@@ -256,6 +258,10 @@ const els = {
   dngSheetPreviewStage: document.getElementById("dngSheetPreviewStage"),
   dngSheetPreviewImage: document.getElementById("dngSheetPreviewImage"),
   dngSheetPreviewEmpty: document.getElementById("dngSheetPreviewEmpty"),
+  dngPreviewZoomOut: document.getElementById("dngPreviewZoomOutButton"),
+  dngPreviewZoomIn: document.getElementById("dngPreviewZoomInButton"),
+  dngPreviewReset: document.getElementById("dngPreviewResetButton"),
+  dngPreviewZoomValue: document.getElementById("dngPreviewZoomValue"),
   summary: document.getElementById("summarySection"),
   messagesSection: document.getElementById("messagesSection"),
   messages: document.getElementById("messagesList"),
@@ -365,6 +371,15 @@ els.dngAddRow?.addEventListener("click", addDngSheetRow);
 els.dngSheetRows?.addEventListener("input", handleDngSheetRowsInput);
 els.dngSheetRows?.addEventListener("change", handleDngSheetRowsChange);
 els.dngSheetRows?.addEventListener("click", handleDngSheetRowsClick);
+els.dngPreviewZoomOut?.addEventListener("click", () => zoomDngPreview(0.82));
+els.dngPreviewZoomIn?.addEventListener("click", () => zoomDngPreview(1.18));
+els.dngPreviewReset?.addEventListener("click", resetDngImageView);
+els.dngSheetPreviewStage?.addEventListener("wheel", handleDngPreviewWheel, { passive: false });
+els.dngSheetPreviewStage?.addEventListener("pointerdown", handleDngPreviewPointerDown);
+els.dngSheetPreviewStage?.addEventListener("pointermove", handleDngPreviewPointerMove);
+els.dngSheetPreviewStage?.addEventListener("pointerup", endDngPreviewDrag);
+els.dngSheetPreviewStage?.addEventListener("pointercancel", endDngPreviewDrag);
+els.dngSheetPreviewStage?.addEventListener("dblclick", resetDngImageView);
 els.lateGraceMinutes?.addEventListener("change", handleGraceMinutesChange);
 els.earlyLeaveGraceMinutes?.addEventListener("change", handleGraceMinutesChange);
 els.countEarlyIn?.addEventListener("change", handleGraceMinutesChange);
@@ -970,12 +985,15 @@ function renderDngSheetPreview(file) {
     els.dngSheetPreviewImage.src = file.previewUrl;
     els.dngSheetPreviewImage.hidden = false;
     els.dngSheetPreviewEmpty.hidden = true;
+    applyDngImageTransform();
   } else {
     els.dngSheetPreviewImage.removeAttribute("src");
     els.dngSheetPreviewImage.hidden = true;
+    els.dngSheetPreviewImage.style.transform = "";
     els.dngSheetPreviewEmpty.hidden = false;
     els.dngSheetPreviewEmpty.textContent = file ? "這個檔案沒有可直接預覽的圖片，仍可 OCR 或 Save rows。" : "選擇一張圖片後會在這裡預覽。";
   }
+  updateDngPreviewZoomUi();
 }
 
 function renderDngSheetRows() {
@@ -996,13 +1014,209 @@ function renderDngSheetRows() {
   }
   els.dngSheetRows.innerHTML = rows.map((row, index) => `
     <tr data-dng-row="${index}">
-      <td><input value="${escapeAttr(row.date || "")}" data-dng-row="${index}" data-dng-field="date" placeholder="2026-04-01"></td>
-      <td><input value="${escapeAttr(row.name || "")}" data-dng-row="${index}" data-dng-field="name" placeholder="Staff name"></td>
+      <td>${renderDngDateSelect(row, index)}</td>
+      <td>${renderDngStaffSelect(row, index)}</td>
       <td><input value="${escapeAttr(row.in || "")}" data-dng-row="${index}" data-dng-field="in" placeholder="09:00"></td>
       <td><input value="${escapeAttr(row.out || "")}" data-dng-row="${index}" data-dng-field="out" placeholder="21:30"></td>
       <td><button type="button" class="ghost danger" data-dng-delete-row="${index}" aria-label="刪除第 ${index + 1} 列">刪除</button></td>
     </tr>
   `).join("");
+}
+
+function renderDngStaffSelect(row, index) {
+  const candidates = dngStaffCandidates(row.name);
+  const selected = dngSelectedStaffName(row.name, candidates);
+  const options = ['<option value="">選擇員工</option>']
+    .concat(candidates.map((item) => (
+      `<option value="${escapeAttr(item.value)}"${item.value === selected ? " selected" : ""}>${escapeHtml(item.value)}</option>`
+    )))
+    .join("");
+  return `<select data-dng-row="${index}" data-dng-field="name" title="必須選擇 Excel 內的員工">${options}</select>`;
+}
+
+function renderDngDateSelect(row, index) {
+  const filename = activeDngLogsheetFile()?.name || "";
+  const candidates = dngDateCandidates(row.date, filename);
+  const selected = dngSelectedScheduleDate(row.date, filename, candidates);
+  const options = ['<option value="">選擇日期</option>']
+    .concat(candidates.map((item) => (
+      `<option value="${escapeAttr(item.value)}"${item.value === selected ? " selected" : ""}>${escapeHtml(item.label)}</option>`
+    )))
+    .join("");
+  return `<select data-dng-row="${index}" data-dng-field="date" title="必須選擇 Excel 內的排班日期">${options}</select>`;
+}
+
+function dngStaffCandidates(query) {
+  return staffAssignmentOptions()
+    .map((name) => ({ value: name, score: dngTextSimilarityScore(query, name) }))
+    .sort((left, right) => right.score - left.score || left.value.localeCompare(right.value));
+}
+
+function dngSelectedStaffName(value, candidates = dngStaffCandidates(value)) {
+  const exact = candidates.find((item) => item.value === value);
+  if (exact) return exact.value;
+  const best = candidates[0];
+  return best && best.score >= 0.2 ? best.value : "";
+}
+
+function dngDateCandidates(rawDate, filename = "") {
+  return scheduleDateValues()
+    .map((date) => ({
+      value: date,
+      label: formatDngScheduleDateOption(date),
+      score: dngDateSimilarityScore(rawDate, filename, date),
+    }))
+    .sort((left, right) => right.score - left.score || left.value.localeCompare(right.value));
+}
+
+function dngSelectedScheduleDate(rawDate, filename = "", candidates = dngDateCandidates(rawDate, filename)) {
+  const exact = candidates.find((item) => item.value === rawDate);
+  if (exact) return exact.value;
+  const best = candidates[0];
+  return best && best.score > 0 ? best.value : "";
+}
+
+function formatDngScheduleDateOption(date) {
+  const match = String(date || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return String(date || "");
+  const month = new Date(Number(match[1]), Number(match[2]) - 1, 1).toLocaleString("en", { month: "short" });
+  return `${Number(match[3])} ${month} ${match[1]}`;
+}
+
+function dngTextSimilarityScore(query, candidate) {
+  const queryKey = normalizeNameKey(query);
+  const candidateKey = normalizeNameKey(candidate);
+  if (!queryKey || !candidateKey) return 0;
+  if (queryKey === candidateKey) return 1;
+  if (candidateKey.includes(queryKey) || queryKey.includes(candidateKey)) {
+    return 0.88 * (Math.min(queryKey.length, candidateKey.length) / Math.max(queryKey.length, candidateKey.length));
+  }
+  const queryTokens = dngTokens(query);
+  const candidateTokens = dngTokens(candidate);
+  if (!queryTokens.length || !candidateTokens.length) return 0;
+  let shared = 0;
+  queryTokens.forEach((token) => {
+    if (candidateTokens.some((candidateToken) => candidateToken === token || candidateToken.startsWith(token) || token.startsWith(candidateToken))) {
+      shared += 1;
+    }
+  });
+  return shared / Math.max(queryTokens.length, candidateTokens.length);
+}
+
+function dngTokens(value) {
+  return String(value || "").toLowerCase().match(/[a-z0-9\u4e00-\u9fff]+/g) || [];
+}
+
+function dngDateSimilarityScore(rawDate, filename, candidateDate) {
+  const match = String(candidateDate || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return 0;
+  const [, candidateYear, candidateMonth, candidateDay] = match;
+  let score = 0;
+  const raw = String(rawDate || "").trim();
+  if (raw === candidateDate) score += 100;
+  if (alignOcrDateToSchedule(raw) === candidateDate) score += 90;
+  const rawHints = dngDateHints(raw);
+  const fileHints = dngDateHints(filename);
+  if (rawHints.years.has(Number(candidateYear))) score += 22;
+  if (rawHints.months.has(Number(candidateMonth))) score += 34;
+  if (rawHints.days.has(Number(candidateDay))) score += 44;
+  if (fileHints.years.has(Number(candidateYear))) score += 8;
+  if (fileHints.months.has(Number(candidateMonth))) score += 18;
+  if (fileHints.days.has(Number(candidateDay))) score += 10;
+  return score;
+}
+
+function dngDateHints(value) {
+  const text = String(value || "").toLowerCase();
+  const months = new Set();
+  const monthNames = {
+    jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3, apr: 4, april: 4,
+    may: 5, jun: 6, june: 6, jul: 7, july: 7, aug: 8, august: 8, sep: 9,
+    sept: 9, september: 9, oct: 10, october: 10, nov: 11, november: 11,
+    dec: 12, december: 12,
+  };
+  Object.entries(monthNames).forEach(([name, month]) => {
+    if (new RegExp(`\\b${name}\\b`, "i").test(text)) months.add(month);
+  });
+  const years = new Set((text.match(/\b20\d{2}\b/g) || []).map(Number));
+  const days = new Set();
+  (text.match(/\b[0-3]?\d\b/g) || []).map(Number).forEach((value) => {
+    if (value >= 1 && value <= 31) days.add(value);
+    if (value >= 1 && value <= 12 && /[-/]\s*\d{1,2}|^\s*\d{1,2}\s*[-/]/.test(text)) months.add(value);
+  });
+  const isoMatch = text.match(/\b(20\d{2})[-/](\d{1,2})[-/](\d{1,2})\b/);
+  if (isoMatch) {
+    years.add(Number(isoMatch[1]));
+    months.add(Number(isoMatch[2]));
+    days.add(Number(isoMatch[3]));
+  }
+  return { years, months, days };
+}
+
+function zoomDngPreview(factor) {
+  if (!hasDngPreviewImage()) return;
+  state.dngImageView.scale = clamp(state.dngImageView.scale * factor, 0.4, 6);
+  applyDngImageTransform();
+}
+
+function handleDngPreviewWheel(event) {
+  if (!hasDngPreviewImage()) return;
+  event.preventDefault();
+  zoomDngPreview(event.deltaY < 0 ? 1.12 : 0.88);
+}
+
+function handleDngPreviewPointerDown(event) {
+  if (!hasDngPreviewImage()) return;
+  state.dngImageDrag = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    imageX: state.dngImageView.x,
+    imageY: state.dngImageView.y,
+  };
+  els.dngSheetPreviewStage?.setPointerCapture(event.pointerId);
+  els.dngSheetPreviewStage?.classList.add("dragging");
+}
+
+function handleDngPreviewPointerMove(event) {
+  const drag = state.dngImageDrag;
+  if (!drag || drag.pointerId !== event.pointerId || !hasDngPreviewImage()) return;
+  state.dngImageView.x = drag.imageX + event.clientX - drag.startX;
+  state.dngImageView.y = drag.imageY + event.clientY - drag.startY;
+  applyDngImageTransform();
+}
+
+function endDngPreviewDrag(event) {
+  if (state.dngImageDrag?.pointerId === event.pointerId) {
+    state.dngImageDrag = null;
+  }
+  els.dngSheetPreviewStage?.classList.remove("dragging");
+}
+
+function resetDngImageView() {
+  state.dngImageView = { x: 0, y: 0, scale: 1 };
+  state.dngImageDrag = null;
+  els.dngSheetPreviewStage?.classList.remove("dragging");
+  applyDngImageTransform();
+}
+
+function applyDngImageTransform() {
+  if (!els.dngSheetPreviewImage) return;
+  const view = state.dngImageView;
+  els.dngSheetPreviewImage.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
+  updateDngPreviewZoomUi();
+}
+
+function updateDngPreviewZoomUi() {
+  const hasImage = hasDngPreviewImage();
+  if (els.dngPreviewZoomValue) els.dngPreviewZoomValue.textContent = `${Math.round(state.dngImageView.scale * 100)}%`;
+  [els.dngPreviewZoomOut, els.dngPreviewZoomIn, els.dngPreviewReset].forEach((button) => {
+    if (button) button.disabled = !hasImage;
+  });
+}
+
+function hasDngPreviewImage() {
+  return Boolean(els.dngSheetPreviewImage?.getAttribute("src") && !els.dngSheetPreviewImage.hidden);
 }
 
 function dngSheetStatusLabel(file, rowCount = 0) {
@@ -1034,6 +1248,7 @@ function selectDngLogsheetFile(fileKey) {
   storeActiveDngDraftRows();
   state.activeLogsheetFileKey = fileKey;
   state.dngSheetRows = loadDngDraftRows(fileKey);
+  resetDngImageView();
   renderDngSheetReview();
 }
 
@@ -1235,6 +1450,8 @@ function dngEditableRowFromOcrRow(row) {
 }
 
 function normalizeDngSheetRowsForSave(rows, filename) {
+  const validStaffNames = new Set(staffAssignmentOptions());
+  const validScheduleDates = new Set(scheduleDateValues());
   return (rows || [])
     .map((row, index) => {
       const name = display(row.name).trim();
@@ -1246,6 +1463,8 @@ function normalizeDngSheetRowsForSave(rows, filename) {
       if (inTime === null) throw new Error(`第 ${index + 1} 列 In 時間格式不正確，可輸入 09:30 或 0930。`);
       if (outTime === null) throw new Error(`第 ${index + 1} 列 Out 時間格式不正確，可輸入 21:30 或 2130。`);
       if (!name && !date && !inTime && !outTime) return null;
+      if (!name || !validStaffNames.has(name)) throw new Error(`第 ${index + 1} 列必須選擇 Excel 內的員工。`);
+      if (!date || !validScheduleDates.has(date)) throw new Error(`第 ${index + 1} 列必須選擇 Excel 內的日期。`);
       return {
         name: name || null,
         date: date || null,
@@ -1515,6 +1734,8 @@ function clearPage() {
   state.dngSheetRows = [];
   state.dngDraftRowsByFileKey = {};
   state.dngSheetBusy = false;
+  state.dngImageView = { x: 0, y: 0, scale: 1 };
+  state.dngImageDrag = null;
   state.rosterIssuesExpanded = false;
   state.exportTableDataset = DEFAULT_EXPORT_TABLE_DATASET;
   state.exportTableUserSelected = false;

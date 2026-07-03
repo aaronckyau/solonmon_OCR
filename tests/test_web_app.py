@@ -327,19 +327,38 @@ def test_d_and_g_logsheet_review_is_one_sheet_at_a_time():
     assert "逐張工作紀錄" in body
     assert "dngSheetFileList" in body
     assert "dngSheetPreviewImage" in body
+    assert "dngPreviewZoomOutButton" in body
+    assert "dngPreviewZoomInButton" in body
+    assert "dngPreviewResetButton" in body
     assert "dngSheetRows" in body
     assert "OCR 目前工作紀錄" in script
     assert "function isDAndGProfile" in script
     assert "function renderDngSheetReview" in script
+    assert "function renderDngStaffSelect" in script
+    assert "function renderDngDateSelect" in script
+    assert "function dngStaffCandidates" in script
+    assert "function dngDateCandidates" in script
+    assert "function dngTextSimilarityScore" in script
+    assert "function dngDateSimilarityScore" in script
+    assert "function zoomDngPreview" in script
+    assert "function handleDngPreviewWheel" in script
+    assert "function applyDngImageTransform" in script
     assert "function ocrCurrentDngSheet" in script
     assert "function saveDngCurrentSheet" in script
     assert "replaceDngOcrRowsForFile" in script
+    assert "必須選擇 Excel 內的員工" in script
+    assert "必須選擇 Excel 內的日期" in script
     assert "activeLogsheetFileKey" in script
     assert "dngDraftRowsByFileKey" in script
+    assert "dngImageView" in script
     assert "await ocrCurrentDngSheet()" in script
     assert "state.ocr.daily_rows = mergeOcrDailyRows([...remainingRows, ...rows])" in script
     assert ".dng-sheet-workspace" in styles
     assert ".dng-sheet-file.is-active" in styles
+    assert ".workbench-step.ocr-panel" in styles
+    assert ".dng-preview-tools" in styles
+    assert ".dng-sheet-preview-stage.dragging" in styles
+    assert ".dng-sheet-table select" in styles
 
 
 def test_parse_without_file_returns_400_json():
