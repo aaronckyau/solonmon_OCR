@@ -1,0 +1,176 @@
+from __future__ import annotations
+
+from schedule_parser import openrouter_ocr
+
+
+def test_dotenv_lowercase_openrouter_key_is_supported(tmp_path, monkeypatch):
+    (tmp_path / ".env").write_text('openrouter="sk-or-test-value"\n', encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER", raising=False)
+    monkeypatch.delenv("openrouter", raising=False)
+    openrouter_ocr._read_dotenv_values.cache_clear()
+
+    assert openrouter_ocr._config_value("OPENROUTER_API_KEY") == ""
+    assert openrouter_ocr._config_value("openrouter") == "sk-or-test-value"
+
+
+def test_image_payload_uses_qwen_model_and_data_url():
+    payload = openrouter_ocr.build_logsheet_ocr_payload(
+        b"fake image",
+        "logsheet.png",
+        model="qwen/qwen3.6-35b-a3b",
+        mime_type="image/png",
+    )
+
+    content = payload["messages"][0]["content"]
+
+    assert payload["model"] == "qwen/qwen3.6-35b-a3b"
+    assert content[1]["type"] == "image_url"
+    assert content[1]["image_url"]["url"].startswith("data:image/png;base64,")
+    assert payload["reasoning"] == {"effort": "none", "exclude": True}
+    assert "daily_rows" in content[0]["text"]
+    assert "first/earliest" in content[0]["text"]
+    assert '"raw_text"' not in content[0]["text"]
+    assert '"tables"' not in content[0]["text"]
+
+
+def test_pdf_payload_uses_file_parser_plugin():
+    payload = openrouter_ocr.build_logsheet_ocr_payload(
+        b"fake pdf",
+        "logsheet.pdf",
+        model="qwen/qwen3.6-35b-a3b",
+        mime_type="application/pdf",
+    )
+
+    content = payload["messages"][0]["content"]
+
+    assert content[1]["type"] == "file"
+    assert content[1]["file"]["file_data"].startswith("data:application/pdf;base64,")
+    assert payload["plugins"][0]["id"] == "file-parser"
+
+
+def test_normalizes_daily_rows_to_first_in_last_out():
+    structured = {
+        "document_type": "logsheet",
+        "entries": [
+            {
+                "date": "21",
+                "morning_in": "21 09:40",
+                "morning_out": "21 12:01",
+                "afternoon_in": "21 12:56",
+                "afternoon_out": "21 18:46",
+            },
+            {
+                "date": "26",
+                "morning_in": "26 12:42",
+                "afternoon_out": "26 16:45",
+            },
+        ],
+    }
+
+    rows = openrouter_ocr.normalize_logsheet_daily_rows(
+        structured,
+        r"doc\Testing\Testing\Oil Street\August 2025\Chan Ching Yee Jenny 2.jpg",
+    )
+
+    assert rows == [
+        {
+            "name": "Chan Ching Yee Jenny",
+            "date": "2025-08-21",
+            "in": "09:40",
+            "out": "18:46",
+            "source_filename": r"doc\Testing\Testing\Oil Street\August 2025\Chan Ching Yee Jenny 2.jpg",
+            "source_filenames": [r"doc\Testing\Testing\Oil Street\August 2025\Chan Ching Yee Jenny 2.jpg"],
+            "all_times": ["09:40", "12:01", "12:56", "18:46"],
+            "warnings": [],
+        },
+        {
+            "name": "Chan Ching Yee Jenny",
+            "date": "2025-08-26",
+            "in": "12:42",
+            "out": "16:45",
+            "source_filename": r"doc\Testing\Testing\Oil Street\August 2025\Chan Ching Yee Jenny 2.jpg",
+            "source_filenames": [r"doc\Testing\Testing\Oil Street\August 2025\Chan Ching Yee Jenny 2.jpg"],
+            "all_times": ["12:42", "16:45"],
+            "warnings": [],
+        },
+    ]
+
+
+def test_merges_multiple_images_by_name_and_date():
+    rows = openrouter_ocr.merge_logsheet_daily_rows(
+        [
+            {"name": "A", "date": "2025-08-21", "in": "09:40", "out": "12:01", "source_filename": "a1.jpg"},
+            {"name": "A", "date": "2025-08-21", "in": "12:56", "out": "18:46", "source_filename": "a2.jpg"},
+        ]
+    )
+
+    assert rows[0]["in"] == "09:40"
+    assert rows[0]["out"] == "18:46"
+    assert rows[0]["source_filenames"] == ["a1.jpg", "a2.jpg"]
+
+
+def test_merge_preserves_explicit_out_without_in():
+    rows = openrouter_ocr.merge_logsheet_daily_rows(
+        [{"name": "A", "date": "2025-08-21", "in": "", "out": "18:46", "all_times": []}]
+    )
+
+    assert rows[0]["in"] is None
+    assert rows[0]["out"] == "18:46"
+
+
+def test_normalize_uses_context_hint_for_month_year():
+    rows = openrouter_ocr.normalize_logsheet_daily_rows(
+        {"entries": [{"date": "21", "morning_in": "09:40", "afternoon_out": "18:46"}]},
+        "Chan Ching Yee Jenny 2.jpg",
+        context_hint="August 2025",
+    )
+
+    assert rows[0]["date"] == "2025-08-21"
+
+
+def test_normalize_prefers_filename_staff_name_over_card_name():
+    rows = openrouter_ocr.normalize_logsheet_daily_rows(
+        {
+            "staff_name": "ISLA",
+            "entries": [{"name": "ISLA", "date": "21", "morning_in": "09:40", "afternoon_out": "18:46"}],
+        },
+        "Cheng Nuo Isla 2.jpg",
+        context_hint="August 2025",
+    )
+
+    assert rows[0]["name"] == "Cheng Nuo Isla"
+
+
+def test_prompt_warns_against_row_numbers_as_punch_times():
+    prompt = openrouter_ocr._build_prompt(None, "Ku Yin Wah 1.jpg")
+
+    assert "left-margin row number is the date/day only" in prompt
+    assert "Never combine that row number with a nearby time" in prompt
+    assert "SIGNATURE, CHECK, ADMIN" in prompt
+    assert "same horizontal row" in prompt
+
+
+def test_extracts_daily_rows_from_truncated_fenced_json():
+    text = """```json
+{
+  "document_type": "logsheet",
+  "staff_name": "ISLA",
+  "month_year": "August 2025",
+  "daily_rows": [
+    {"name": "ISLA", "date": "18", "in": "13:40", "out": "20:15", "all_times": ["13:40", "20:15"], "warnings": []},
+    {"name": "ISLA", "date": "20", "in": "09:41", "out": "20:15", "all_times": ["09:41", "14:05", "14:47", "20:15"], "warnings": []}
+  ],
+  "tables": [
+"""
+
+    parsed = openrouter_ocr._extract_json_object(text)
+    rows = openrouter_ocr.normalize_logsheet_daily_rows(parsed, "Cheng Nuo Isla 2.jpg", context_hint="August 2025")
+
+    assert parsed["staff_name"] == "ISLA"
+    assert len(parsed["daily_rows"]) == 2
+    assert rows[0]["name"] == "Cheng Nuo Isla"
+    assert rows[0]["date"] == "2025-08-18"
+    assert rows[0]["in"] == "13:40"
+    assert rows[1]["out"] == "20:15"

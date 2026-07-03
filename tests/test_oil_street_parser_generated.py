@@ -47,6 +47,12 @@ def test_apr_style_generated_workbook_parses_shift_code_layout(tmp_path):
     assert override.scheduled_in == "14:00"
     assert override.scheduled_out == "20:15"
     assert override.resolution_source == "inline_override"
+    b1_entry = next(entry for entry in parsed.entries if entry.raw_shift_code == "B1")
+    assert b1_entry.shift_code == "B1"
+    assert b1_entry.scheduled_in == "13:45"
+    assert b1_entry.scheduled_out == "20:15"
+    assert b1_entry.scheduled_hours == 6.5
+    assert b1_entry.resolution_source == "legend"
 
 
 def test_formula_date_headers_are_inferred(tmp_path):

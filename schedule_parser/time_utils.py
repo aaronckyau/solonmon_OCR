@@ -129,27 +129,32 @@ def parse_time_range(text: Any) -> dict[str, Any] | None:
         return None
 
     duration_hours = parse_duration_hours(source)
-    start_candidates = time_token_candidates(tokens[0])
-    end_candidates = time_token_candidates(tokens[1])
-    if not start_candidates or not end_candidates:
-        return None
-
-    best: tuple[tuple[float, int, int, int], int, int, int] | None = None
-    for start_minutes in start_candidates:
-        for end_minutes in end_candidates:
-            delta = end_minutes - start_minutes
-            overnight = 0
-            if delta <= 0:
-                delta += 24 * 60
-                overnight = 1
-            if delta > 20 * 60:
+    best: tuple[tuple[float, int, int, int, int, int], int, int, int] | None = None
+    for start_index, start_token in enumerate(tokens[:-1]):
+        start_candidates = time_token_candidates(start_token)
+        if not start_candidates:
+            continue
+        for end_index, end_token in enumerate(tokens[start_index + 1 :], start=start_index + 1):
+            end_candidates = time_token_candidates(end_token)
+            if not end_candidates:
                 continue
-            early_start = 1 if start_minutes < 6 * 60 else 0
-            score = abs(delta / 60 - duration_hours) if duration_hours is not None else 0
-            # Prefer duration match, non-overnight, non-pre-dawn, then shorter day shift.
-            sort_key = (score, overnight, early_start, delta)
-            if best is None or sort_key < best[0]:
-                best = (sort_key, start_minutes, end_minutes, delta)
+            for start_minutes in start_candidates:
+                for end_minutes in end_candidates:
+                    delta = end_minutes - start_minutes
+                    overnight = 0
+                    if delta <= 0:
+                        delta += 24 * 60
+                        overnight = 1
+                    if delta > 20 * 60:
+                        continue
+                    early_start = 1 if start_minutes < 6 * 60 else 0
+                    score = abs(delta / 60 - duration_hours) if duration_hours is not None else 0
+                    specificity = _time_token_specificity(start_token) + _time_token_specificity(end_token)
+                    token_distance = end_index - start_index
+                    # Prefer duration match, explicit time tokens, earlier nearby tokens, then ordinary day shifts.
+                    sort_key = (score, specificity, start_index, token_distance, overnight + early_start, delta)
+                    if best is None or sort_key < best[0]:
+                        best = (sort_key, start_minutes, end_minutes, delta)
 
     if best is None:
         return None
@@ -170,6 +175,16 @@ def parse_duration_hours(text: str) -> float | None:
         return float(match.group(1))
     except ValueError:
         return None
+
+
+def _time_token_specificity(token: str) -> int:
+    text = str(token or "").strip().lower()
+    score = 0
+    if ":" not in text and "." not in text:
+        score += 1
+    if "am" not in text and "pm" not in text:
+        score += 1
+    return score
 
 
 def time_token_candidates(token: str) -> list[int]:

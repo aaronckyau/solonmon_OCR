@@ -164,6 +164,8 @@ def parse_inline_override(raw_code: Any, base_shift_times: dict[str, ParsedShift
     text = str(raw_code or "").strip()
     if not text:
         return None
+    if SHIFT_CODE_RE.fullmatch(normalize_shift_code(text)):
+        return None
     match = re.match(r"^\s*([A-Z]\d?)\s*(?:\((.+)\)|(.+))\s*$", text, re.IGNORECASE)
     if not match:
         return None
@@ -263,7 +265,7 @@ def _shift_definitions_from_row(cells: list[Any], applies_to: str, specific_date
 
 
 def _parse_shift_definition_text(text: str, coordinate: str, applies_to: str, specific_dates: list[str]) -> ParsedShiftTime | None:
-    match = re.match(r"^\s*([A-Z]\d?(?:/[A-Z]\d?)*)\s*[.:\-]?\s*(.+)$", text, re.IGNORECASE)
+    match = re.match(r"^\s*([A-Z]\d?(?:/[A-Z]\d?)*)(?:\s*[.:\-]\s*|\s+)(.+)$", text, re.IGNORECASE)
     if not match:
         return None
     code = normalize_shift_code(match.group(1))
