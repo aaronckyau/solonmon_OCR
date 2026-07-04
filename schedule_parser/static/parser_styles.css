@@ -915,7 +915,9 @@ h3 {
   place-items: center;
   height: 470px;
   overflow: auto;
+  cursor: grab;
   touch-action: none;
+  user-select: none;
   background:
     linear-gradient(#eef2f6 1px, transparent 1px),
     linear-gradient(90deg, #eef2f6 1px, transparent 1px),
@@ -934,6 +936,8 @@ h3 {
   object-fit: contain;
   transform-origin: center center;
   will-change: transform;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 .dng-sheet-table-wrap {

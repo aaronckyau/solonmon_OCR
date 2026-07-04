@@ -342,6 +342,7 @@ def test_d_and_g_logsheet_review_is_one_sheet_at_a_time():
     assert "function renderDngStaffSelect" in script
     assert "function renderDngDateSelect" in script
     assert "function dngStaffCandidates" in script
+    assert "function dngSuggestedStaffName" in script
     assert "function dngDateCandidates" in script
     assert "function dngFilenameScheduleDate" in script
     assert "function dngFilenameDateCandidates" in script
@@ -368,6 +369,8 @@ def test_d_and_g_logsheet_review_is_one_sheet_at_a_time():
     assert "function zoomDngPreview" in script
     assert "function handleDngPreviewWheel" in script
     assert "function applyDngImageTransform" in script
+    assert "els.dngSheetPreviewStage?.addEventListener(\"dragstart\", (event) => event.preventDefault())" in script
+    assert "els.dngSheetPreviewImage.draggable = false" in script
     assert "function dngPendingOcrFiles" in script
     assert "function ocrPendingDngSheets" in script
     assert "function ocrDngSheetFile" in script
@@ -395,6 +398,7 @@ def test_d_and_g_logsheet_review_is_one_sheet_at_a_time():
     assert ".workbench-step.ocr-panel" in styles
     assert ".dng-preview-tools" in styles
     assert ".dng-sheet-preview-stage.dragging" in styles
+    assert "-webkit-user-drag: none" in styles
     assert ".dng-sheet-table select" in styles
     assert ".dng-sheet-table tr.is-attended" in styles
     assert ".dng-sheet-table tr.is-late" in styles

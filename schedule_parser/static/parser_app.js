@@ -378,6 +378,7 @@ els.dngPreviewZoomOut?.addEventListener("click", () => zoomDngPreview(0.82));
 els.dngPreviewZoomIn?.addEventListener("click", () => zoomDngPreview(1.18));
 els.dngPreviewReset?.addEventListener("click", resetDngImageView);
 els.dngSheetPreviewStage?.addEventListener("wheel", handleDngPreviewWheel, { passive: false });
+els.dngSheetPreviewStage?.addEventListener("dragstart", (event) => event.preventDefault());
 els.dngSheetPreviewStage?.addEventListener("pointerdown", handleDngPreviewPointerDown);
 els.dngSheetPreviewStage?.addEventListener("pointermove", handleDngPreviewPointerMove);
 els.dngSheetPreviewStage?.addEventListener("pointerup", endDngPreviewDrag);
@@ -1013,6 +1014,7 @@ function renderDngSheetPreview(file) {
   if (!els.dngSheetPreviewImage || !els.dngSheetPreviewEmpty) return;
   if (file?.previewUrl) {
     els.dngSheetPreviewImage.src = file.previewUrl;
+    els.dngSheetPreviewImage.draggable = false;
     els.dngSheetPreviewImage.hidden = false;
     els.dngSheetPreviewEmpty.hidden = true;
     applyDngImageTransform();
@@ -1094,6 +1096,11 @@ function dngSelectedStaffName(value, candidates = dngStaffCandidates(value)) {
   if (exact) return exact.value;
   const best = candidates[0];
   return best && best.score >= 0.2 ? best.value : "";
+}
+
+function dngSuggestedStaffName(query, scheduleDate = "") {
+  const best = dngStaffCandidates(query, scheduleDate)[0];
+  return best && best.score >= 0.42 ? best.value : "";
 }
 
 function dngDateCandidates(rawDate, filename = "") {
@@ -1331,13 +1338,14 @@ function dngReviewRowFromOcrRow(row, sheetDate, filename, usedScheduleKeys, inde
   }
 
   const exactStaff = dngExactStaffName(row.name);
+  const suggestedStaff = exactStaff || dngSuggestedStaffName(row.originalName || row.name, rowDate);
   return dngRecomputeSheetRowStatus({
     ...row,
     date: rowDate,
-    name: exactStaff,
+    name: suggestedStaff,
     originalName: row.originalName || row.name,
-    matchScore: exactStaff ? 1 : 0,
-    matchStatus: exactStaff ? "manual" : "unmatched",
+    matchScore: exactStaff ? 1 : (suggestedStaff ? dngTextSimilarityScore(row.originalName || row.name, suggestedStaff) : 0),
+    matchStatus: suggestedStaff ? "manual" : "unmatched",
     isScheduled: false,
     isOcrRow: true,
     source_filename: row.source_filename || filename,
@@ -1551,6 +1559,7 @@ function handleDngPreviewWheel(event) {
 
 function handleDngPreviewPointerDown(event) {
   if (!hasDngPreviewImage()) return;
+  event.preventDefault();
   state.dngImageDrag = {
     pointerId: event.pointerId,
     startX: event.clientX,
@@ -1565,6 +1574,7 @@ function handleDngPreviewPointerDown(event) {
 function handleDngPreviewPointerMove(event) {
   const drag = state.dngImageDrag;
   if (!drag || drag.pointerId !== event.pointerId || !hasDngPreviewImage()) return;
+  event.preventDefault();
   state.dngImageView.x = drag.imageX + event.clientX - drag.startX;
   state.dngImageView.y = drag.imageY + event.clientY - drag.startY;
   applyDngImageTransform();
