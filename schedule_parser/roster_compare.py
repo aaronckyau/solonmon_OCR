@@ -202,7 +202,9 @@ def _build_actual_lookup(
 
     for row in merged_rows:
         actual = _normalize_actual_row(row, schedule_dates)
-        match = _best_staff_match(actual["ocr_name"], staff)
+        match = _confirmed_staff_match(actual.get("assigned_staff_name", ""), staff)
+        if not match:
+            match = _best_staff_match(actual["ocr_name"], staff)
         if match:
             actual.update(match)
             matched_staff_names.add(match["staff_name"])
@@ -231,7 +233,8 @@ def _normalize_actual_row(row: dict[str, Any], schedule_dates: set[str]) -> dict
     if all_times:
         all_times = sorted(set(all_times), key=_time_minutes_safe)
     return {
-        "ocr_name": _clean_text(row.get("name") or row.get("ocr_name")),
+        "ocr_name": _clean_text(row.get("ocr_name") or row.get("original_name") or row.get("name") or row.get("staff_name")),
+        "assigned_staff_name": _clean_text(row.get("assigned_staff_name")),
         "staff_name": "",
         "date": _normalize_ocr_date(row.get("date"), schedule_dates),
         "ocr_date": _clean_text(row.get("date")),
@@ -242,6 +245,25 @@ def _normalize_actual_row(row: dict[str, Any], schedule_dates: set[str]) -> dict
         "all_times": all_times,
         "warnings": [str(item) for item in row.get("warnings") or [] if item],
     }
+
+
+def _confirmed_staff_match(name: str, staff: list[dict[str, Any]]) -> dict[str, Any] | None:
+    query = _normalize_name_key(name)
+    if not query:
+        return None
+
+    for item in staff:
+        candidate_name = _clean_text(item.get("name"))
+        if query != _normalize_name_key(candidate_name):
+            continue
+        return {
+            "staff_name": candidate_name,
+            "staff_id": item.get("staff_id") or "",
+            "phone_last4": item.get("phone_last4") or "",
+            "match_score": 1.0,
+            "match_type": "confirmed",
+        }
+    return None
 
 
 def _best_staff_match(name: str, staff: list[dict[str, Any]]) -> dict[str, Any] | None:

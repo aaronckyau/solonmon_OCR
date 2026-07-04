@@ -384,6 +384,8 @@ def test_d_and_g_logsheet_review_is_one_sheet_at_a_time():
     assert "function ocrCurrentDngSheet" in script
     assert "function saveDngCurrentSheet" in script
     assert "replaceDngOcrRowsForFile" in script
+    assert "ocr_name: row.originalName || name || null" in script
+    assert "assigned_staff_name: name || null" in script
     assert "必須選擇 Excel 內的員工" in script
     assert "必須選擇 Excel 內的日期" in script
     assert "activeLogsheetFileKey" in script

@@ -178,6 +178,28 @@ def test_merge_preserves_explicit_out_without_in():
     assert rows[0]["out"] == "18:46"
 
 
+def test_merge_preserves_confirmed_staff_assignment_fields():
+    rows = openrouter_ocr.merge_logsheet_daily_rows(
+        [
+            {
+                "name": "Lun Ka Yan Ashley",
+                "assigned_staff_name": "Lun Ka Yan Ashley",
+                "ocr_name": "Luk Ka Yan",
+                "original_name": "Luk Ka Yan",
+                "date": "2026-04-01",
+                "in": "08:30",
+                "out": "22:40",
+                "source_filename": "1 Apr.jpg",
+            }
+        ]
+    )
+
+    assert rows[0]["name"] == "Lun Ka Yan Ashley"
+    assert rows[0]["assigned_staff_name"] == "Lun Ka Yan Ashley"
+    assert rows[0]["ocr_name"] == "Luk Ka Yan"
+    assert rows[0]["original_name"] == "Luk Ka Yan"
+
+
 def test_normalize_uses_context_hint_for_month_year():
     rows = openrouter_ocr.normalize_logsheet_daily_rows(
         {"entries": [{"date": "21", "morning_in": "09:40", "afternoon_out": "18:46"}]},

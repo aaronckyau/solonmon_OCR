@@ -113,6 +113,65 @@ def test_unmatched_ocr_name_does_not_expand_entire_roster_as_missing():
     assert result["summary"]["unmatched_name_rows"] == 1
 
 
+def test_confirmed_staff_assignment_overrides_fuzzy_ocr_name():
+    schedule = {
+        "sheet_name": "April 2026",
+        "staff": [
+            {"name": "Lun Ka Yan Ashley", "staff_id": "S001", "phone_last4": "1111", "row": 7},
+            {"name": "Ho Ka Yan", "staff_id": "S002", "phone_last4": "2222", "row": 8},
+        ],
+        "entries": [
+            {
+                "staff_name": "Lun Ka Yan Ashley",
+                "staff_id": "S001",
+                "phone_last4": "1111",
+                "date": "2026-04-01",
+                "shift_code": "D&G",
+                "raw_shift_code": "D&G",
+                "scheduled_in": "10:00",
+                "scheduled_out": "21:15",
+                "scheduled_hours": 11.25,
+                "schedule_cell": "E7",
+            },
+            {
+                "staff_name": "Ho Ka Yan",
+                "staff_id": "S002",
+                "phone_last4": "2222",
+                "date": "2026-04-01",
+                "shift_code": "D&G",
+                "raw_shift_code": "D&G",
+                "scheduled_in": "09:30",
+                "scheduled_out": "18:30",
+                "scheduled_hours": 9,
+                "schedule_cell": "E8",
+            },
+        ],
+    }
+
+    result = compare_schedule_to_ocr(
+        schedule,
+        [
+            {
+                "name": "Lun Ka Yan Ashley",
+                "assigned_staff_name": "Lun Ka Yan Ashley",
+                "ocr_name": "Luk Ka Yan",
+                "original_name": "Luk Ka Yan",
+                "date": "2026-04-01",
+                "in": "08:30",
+                "out": "22:40",
+            }
+        ],
+    )
+
+    assert result["summary"]["matched_rows"] == 1
+    matched = next(row for row in result["rows"] if row["staff_name"] == "Lun Ka Yan Ashley")
+    assert matched["ocr_name"] == "Luk Ka Yan"
+    assert matched["actual_in"] == "08:30"
+    assert matched["actual_out"] == "22:40"
+    assert matched["name_match_type"] == "confirmed"
+    assert not any(row["staff_name"] == "Ho Ka Yan" and row.get("has_actual") for row in result["rows"])
+
+
 def test_merges_multiple_ocr_rows_to_first_in_last_out_for_same_staff_date():
     result = compare_schedule_to_ocr(
         sample_schedule(),

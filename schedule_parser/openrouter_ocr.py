@@ -502,6 +502,9 @@ def merge_logsheet_daily_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]
     order: list[tuple[str, str, str]] = []
     for index, row in enumerate(rows):
         name = _string_or_none(row.get("name"))
+        ocr_name = _string_or_none(row.get("ocr_name"))
+        original_name = _string_or_none(row.get("original_name"))
+        assigned_staff_name = _string_or_none(row.get("assigned_staff_name"))
         date = _string_or_none(row.get("date"))
         source_filename = _string_or_none(row.get("source_filename")) or ""
         key = (name or "", date or "", "" if date else f"{source_filename}:{index}")
@@ -516,9 +519,21 @@ def merge_logsheet_daily_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]
                 "all_times": [],
                 "warnings": [],
             }
+            if ocr_name:
+                merged[key]["ocr_name"] = ocr_name
+            if original_name:
+                merged[key]["original_name"] = original_name
+            if assigned_staff_name:
+                merged[key]["assigned_staff_name"] = assigned_staff_name
             order.append(key)
         target = merged[key]
         target["name"] = target["name"] or name
+        if ocr_name and not target.get("ocr_name"):
+            target["ocr_name"] = ocr_name
+        if original_name and not target.get("original_name"):
+            target["original_name"] = original_name
+        if assigned_staff_name and not target.get("assigned_staff_name"):
+            target["assigned_staff_name"] = assigned_staff_name
         target["date"] = target["date"] or date
         target["source_filename"] = target["source_filename"] or source_filename
         _append_unique(target["source_filenames"], row.get("source_filenames") or [source_filename])

@@ -2026,6 +2026,8 @@ function normalizeDngSheetRowsForSave(rows, filename) {
       if (!date || !validScheduleDates.has(date)) throw new Error(`第 ${index + 1} 列必須選擇 Excel 內的日期。`);
       return {
         name: name || null,
+        ocr_name: row.originalName || name || null,
+        assigned_staff_name: name || null,
         date: date || null,
         in: inTime || null,
         out: outTime || null,
