@@ -3189,6 +3189,15 @@ function rosterShiftChipHtml(log) {
   );
 }
 
+function isManualReviewedCompareRow(row) {
+  if (!row?.has_actual) return false;
+  if (String(row.name_match_type || "").trim() === "confirmed") return true;
+  return sourceFilenamesForRow(row).some((filename) => {
+    const file = logsheetFileByKey(logsheetFileKey(filename));
+    return Boolean(file?.reviewSaved);
+  });
+}
+
 function rosterLogStatus(entry, compareRow) {
   if (!ocrRows().length) return { status: "pending", label: "等待 OCR", issue: false, confidenceLow: false };
   if (!compareRow || !compareRow.has_actual) return { status: "missing", label: "沒有同員工/日期的打卡資料", issue: true, confidenceLow: false };
@@ -3203,6 +3212,14 @@ function rosterLogStatus(entry, compareRow) {
       label: `${status.label}；${confidenceLabel(compareRow)}`,
     };
   };
+  if (isManualReviewedCompareRow(compareRow)) {
+    return {
+      status: "reviewed",
+      label: `已人工覆核：${compareRow.actual_in || "-"}-${compareRow.actual_out || "-"}`,
+      issue: false,
+      confidenceLow: false,
+    };
+  }
   const actualTimeReasons = compareActualTimeReasons(compareRow);
   if (actualTimeReasons.length) {
     const status = String(compareRow.status || "");
@@ -3488,6 +3505,7 @@ function statusLabelForDetail(status, compareRowOrStatus) {
   const actualReasons = compareRow ? compareActualTimeReasons(compareRow) : [];
   if (["late", "early", "warning"].includes(status) && actualReasons.length) return actualReasons.join(" + ");
   if (status === "ok") return "已工作";
+  if (status === "reviewed") return "已覆核";
   if (status === "late") return "遲到";
   if (status === "early") return "早退";
   if (status === "missing") return "缺資料";

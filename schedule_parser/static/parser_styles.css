@@ -288,6 +288,11 @@ html {
   margin-left: calc(50% - min(920px, calc(50vw - 12px)));
 }
 
+.workbench-step.check-schedule-panel {
+  width: min(1920px, calc(100vw - 24px));
+  margin-left: calc(50% - min(960px, calc(50vw - 12px)));
+}
+
 .workbench-step.ocr-panel {
   width: min(1920px, calc(100vw - 24px));
   margin-left: calc(50% - min(960px, calc(50vw - 12px)));
@@ -1631,7 +1636,8 @@ h3 {
   font-weight: 700;
 }
 
-.roster-shift-chip.is-ok {
+.roster-shift-chip.is-ok,
+.roster-shift-chip.is-reviewed {
   border-color: #75e0a7;
   background: #ecfdf3;
 }
@@ -1664,12 +1670,6 @@ h3 {
 .roster-shift-chip.is-missing {
   border-color: var(--error-border);
   background: var(--error);
-}
-
-.roster-shift-chip.is-reviewed {
-  border-color: #84caff;
-  background: #eff8ff;
-  color: #175cd3;
 }
 
 .roster-shift-chip.is-confidence {
@@ -1768,7 +1768,9 @@ h3 {
 }
 
 .roster-detail-main.is-ok,
-.roster-detail-note.is-ok {
+.roster-detail-note.is-ok,
+.roster-detail-main.is-reviewed,
+.roster-detail-note.is-reviewed {
   background: #f6fef9;
 }
 
@@ -1853,6 +1855,11 @@ h3 {
 .roster-detail-main.is-warning .roster-status-pill {
   background: #fef3c7;
   color: #92400e;
+}
+
+.roster-detail-main.is-reviewed .roster-status-pill {
+  background: #dcfae6;
+  color: #067647;
 }
 
 .roster-detail-image-pane {
@@ -2036,13 +2043,28 @@ h3 {
   max-height: 560px;
 }
 
+.check-schedule-panel .entries-table {
+  max-height: none;
+  overflow: visible;
+}
+
 .entries-table table {
   min-width: 900px;
   table-layout: fixed;
 }
 
+.check-schedule-panel .entries-table table {
+  width: 100%;
+  min-width: 0;
+}
+
 .entries-table table.is-holiday-split {
   min-width: 1120px;
+}
+
+.check-schedule-panel .entries-table table.is-holiday-split,
+.check-schedule-panel .entries-table table.is-month-split {
+  min-width: 0;
 }
 
 .entries-table table.is-month-split {

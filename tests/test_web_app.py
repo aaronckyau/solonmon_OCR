@@ -98,6 +98,7 @@ def test_index_renders_upload_page():
     assert "holidayOfficialInput" in body
     assert "holidayOfficialYearInput" in body
     assert "holidayUploadInput" in body
+    assert "check-schedule-panel" in body
     assert "entriesTableHead" in body
     assert "GovHK 官方假期" in body
     assert '<option value="2025">2025</option>' in body
@@ -123,6 +124,20 @@ def test_index_renders_upload_page():
     assert "scheduleVariantStatus" in body
     assert 'id="messagesSection" hidden' in body
     assert body.index("<h3>排班資料</h3>") < body.index("<summary>班次時間</summary>")
+
+
+def test_step_two_check_schedule_is_full_width_without_entries_scroll():
+    root = Path(__file__).parents[1]
+    body = (root / "schedule_parser" / "templates" / "parser_index.html").read_text(encoding="utf-8")
+    styles = (root / "schedule_parser" / "static" / "parser_styles.css").read_text(encoding="utf-8")
+
+    assert 'class="panel workbench-step check-schedule-panel"' in body
+    assert ".workbench-step.check-schedule-panel" in styles
+    assert ".check-schedule-panel .entries-table" in styles
+    assert "max-height: none;" in styles
+    assert "overflow: visible;" in styles
+    assert ".check-schedule-panel .entries-table table" in styles
+    assert "width: 100%;" in styles
 
 
 def test_project_step_supports_heritage_log_sheet_copy():
@@ -211,6 +226,9 @@ def test_roster_summary_splits_holiday_columns_and_uses_compact_chips():
     assert "function renderRosterColumnStructure" in script
     assert "function rosterColumnCount" in script
     assert "function rosterShiftChipHtml" in script
+    assert "function isManualReviewedCompareRow" in script
+    assert "isManualReviewedCompareRow(compareRow)" in script
+    assert 'status: "reviewed"' in script
     assert "roster-col-ph-hours" in script
     assert "Normal day" in script
     assert "非公眾假期" in script
@@ -221,6 +239,7 @@ def test_roster_summary_splits_holiday_columns_and_uses_compact_chips():
     assert "if (state.comparison) renderRosterSummary(state.comparison.rows || [])" in script
     assert ".roster-col-ph-hours" in styles
     assert ".roster-metric-cell.is-ph" in styles
+    assert ".roster-shift-chip.is-ok,\n.roster-shift-chip.is-reviewed" in styles
     assert "min-height: 20px" in styles
     assert "font-size: 11px" in styles
 
@@ -274,6 +293,7 @@ def test_actual_time_exceptions_use_warning_visuals():
     assert "currentCountOvertime" in script
     assert "comparisonStatusLabelForRow(row)" in script
     assert ".roster-detail-main.is-warning" in styles
+    assert ".roster-detail-main.is-reviewed" in styles
     assert ".roster-shift-chip.is-warning" in styles
 
 
