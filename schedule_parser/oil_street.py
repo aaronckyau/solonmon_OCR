@@ -13,7 +13,12 @@ from openpyxl.utils import get_column_letter
 
 from .diagnostics import build_parse_diagnostics
 from .excel_inspector import inspect_workbook, normalize_label
-from .layout_detector import DIRECT_TIME_WITH_HOURS_COLUMNS, SHIFT_CODE_MATRIX_WITH_LEGEND, detect_schedule_layout
+from .layout_detector import (
+    DIRECT_TIME_WITH_HOURS_COLUMNS,
+    FIRST_SHEET_SELECTED_OVER_HIGHER_SCORING_SHEET,
+    SHIFT_CODE_MATRIX_WITH_LEGEND,
+    detect_schedule_layout,
+)
 from .rule_resolver import (
     ShiftRuleAIResolver,
     is_section_header,
@@ -63,7 +68,7 @@ def parse_oil_street_schedule(
     source_filename = filename or _filename(path_or_bytes)
     inspected = inspect_workbook(raw, filename=source_filename)
     detection = detect_schedule_layout(inspected)
-    warnings = [ParserWarning(code=code, message=code, cell=None, severity="warning") for code in detection.warnings]
+    warnings = [_layout_warning(code, detection.diagnostics) for code in detection.warnings]
     errors: list[ParserError] = []
     entries: list[ParsedScheduleEntry] = []
     staff: list[ParsedStaff] = []
@@ -380,6 +385,29 @@ def _warning_message(code: str, shift_code: str) -> str:
         return f"OR shift code contains unknown part: {shift_code}"
     if code == "UNPARSED_DIRECT_TIME":
         return "Could not parse direct time range."
+    return code
+
+
+def _layout_warning(code: str, diagnostics: dict[str, Any]) -> ParserWarning:
+    return ParserWarning(
+        code=code,
+        message=_layout_warning_message(code, diagnostics),
+        cell=None,
+        severity="warning",
+    )
+
+
+def _layout_warning_message(code: str, diagnostics: dict[str, Any]) -> str:
+    if code == FIRST_SHEET_SELECTED_OVER_HIGHER_SCORING_SHEET:
+        selected = diagnostics.get("selected_first_sheet") or diagnostics.get("sheet_name")
+        ignored = diagnostics.get("ignored_higher_scoring_sheet") or {}
+        ignored_name = ignored.get("sheet_name") if isinstance(ignored, dict) else None
+        if selected and ignored_name:
+            return (
+                f"已優先讀取第一個工作表「{selected}」；另有工作表「{ignored_name}」偵測分數較高但已忽略，"
+                "請確認目前使用的工作表正確。"
+            )
+        return "已優先讀取第一個可解析工作表；請確認目前使用的工作表正確。"
     return code
 
 

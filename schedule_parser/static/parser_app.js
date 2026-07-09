@@ -73,7 +73,7 @@ const SCHEDULE_SUMMARY_OVERRIDE_FIELDS = new Set([
 ]);
 const ALL_SCHEDULE_VARIANT_KEY = "__all__";
 const DEFAULT_PROJECT_PROFILE = "oil_street";
-const DEFAULT_EXPORT_TABLE_DATASET = "compare_rows";
+const DEFAULT_EXPORT_TABLE_DATASET = "roster_summary";
 const WORKFLOW_STEP_ORDER = ["project-select", "schedule-upload", "check-schedule", "log-upload", "manage-schedule", "export"];
 const API_BASE_PATH = (document.body?.dataset.apiBase || "").replace(/\/+$/, "");
 const PROJECT_PROFILES = {
@@ -338,10 +338,10 @@ els.projectCards.forEach((button) => {
 els.workflowSteps.forEach((button) => {
   button.addEventListener("click", () => setWorkflowStep(button.dataset.workflowStep));
 });
-els.search.addEventListener("input", renderEntries);
-els.staffFilter.addEventListener("change", renderEntries);
-els.unresolvedOnly.addEventListener("change", renderEntries);
-els.warningsOnly.addEventListener("change", renderEntries);
+els.search?.addEventListener("input", renderEntries);
+els.staffFilter?.addEventListener("change", renderEntries);
+els.unresolvedOnly?.addEventListener("change", renderEntries);
+els.warningsOnly?.addEventListener("change", renderEntries);
 els.holidaySunday?.addEventListener("change", handleHolidayOptionsChange);
 els.holidayOfficial?.addEventListener("change", handleHolidayOptionsChange);
 els.holidayOfficialYear?.addEventListener("change", handleHolidayOptionsChange);
@@ -2312,10 +2312,10 @@ function clearPage() {
   syncGraceInputs();
   clearOcrResult();
   clearComparison("尚未解析排班表和 OCR。");
-  els.search.value = "";
-  els.staffFilter.innerHTML = '<option value="">全部員工</option>';
-  els.unresolvedOnly.checked = false;
-  els.warningsOnly.checked = false;
+  if (els.search) els.search.value = "";
+  if (els.staffFilter) els.staffFilter.innerHTML = '<option value="">全部員工</option>';
+  if (els.unresolvedOnly) els.unresolvedOnly.checked = false;
+  if (els.warningsOnly) els.warningsOnly.checked = false;
   state.holidayCountSunday = false;
   state.holidayUseOfficial = true;
   state.officialHolidayYear = DEFAULT_GOVHK_HOLIDAY_YEAR;
@@ -4480,6 +4480,7 @@ function renderShiftTimes(shiftTimes) {
 }
 
 function renderStaffFilter(staffRows) {
+  if (!els.staffFilter) return;
   const current = els.staffFilter.value;
   const names = [...new Set(staffRows.map((row) => row.name).filter(Boolean))].sort();
   els.staffFilter.innerHTML = '<option value="">全部員工</option>' + names.map((name) => (
@@ -4619,10 +4620,10 @@ function handleScheduleSummaryOverrideChange(event) {
 }
 
 function renderEntries() {
-  const query = els.search.value.trim().toLowerCase();
-  const staffName = els.staffFilter.value;
-  const unresolvedOnly = els.unresolvedOnly.checked;
-  const warningsOnly = els.warningsOnly.checked;
+  const query = (els.search?.value || "").trim().toLowerCase();
+  const staffName = els.staffFilter?.value || "";
+  const unresolvedOnly = Boolean(els.unresolvedOnly?.checked);
+  const warningsOnly = Boolean(els.warningsOnly?.checked);
   const indexedEntries = state.entries.map((entry, index) => ({ entry, index }));
   const filtered = indexedEntries.filter(({ entry }) => {
     if (staffName && entry.staff_name !== staffName) return false;
@@ -4980,6 +4981,24 @@ function clearExportTable() {
 function exportTableDatasets() {
   const datasets = [
     {
+      id: "roster_summary",
+      label: "員工排班彙總",
+      columns: [
+        ["staff", "員工"],
+        ["days", "天數"],
+        ["hours", "預定時數"],
+        ["normalDays", "Normal 天數"],
+        ["normalHours", "Normal 時數"],
+        ["publicHolidayDays", "PH 天數"],
+        ["publicHolidayHours", "PH 時數"],
+        ["actualHours", "實際時數"],
+        ["actualDiff", "實際差異"],
+        ["issues", "需覆核"],
+        ["schedule", "排班日"],
+      ],
+      rows: exportRosterSummaryRows(),
+    },
+    {
       id: "compare_rows",
       label: "核對明細",
       columns: [
@@ -5025,24 +5044,6 @@ function exportTableDatasets() {
         ["warnings", "警告"],
       ],
       rows: exportScheduleEntryRows(),
-    },
-    {
-      id: "roster_summary",
-      label: "員工排班彙總",
-      columns: [
-        ["staff", "員工"],
-        ["days", "天數"],
-        ["hours", "預定時數"],
-        ["normalDays", "Normal 天數"],
-        ["normalHours", "Normal 時數"],
-        ["publicHolidayDays", "PH 天數"],
-        ["publicHolidayHours", "PH 時數"],
-        ["actualHours", "實際時數"],
-        ["actualDiff", "實際差異"],
-        ["issues", "需覆核"],
-        ["schedule", "排班日"],
-      ],
-      rows: exportRosterSummaryRows(),
     },
     {
       id: "shift_times",

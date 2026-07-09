@@ -8,6 +8,7 @@ from typing import Any
 DIRECT_TIME_WITH_HOURS_COLUMNS = "direct_time_with_hours_columns"
 SHIFT_CODE_MATRIX_WITH_LEGEND = "shift_code_matrix_with_legend"
 UNKNOWN = "unknown"
+FIRST_SHEET_SELECTED_OVER_HIGHER_SCORING_SHEET = "FIRST_SHEET_SELECTED_OVER_HIGHER_SCORING_SHEET"
 
 
 @dataclass(slots=True)
@@ -31,7 +32,8 @@ SHIFT_CODE_RE = re.compile(r"^[A-Z](?:\d)?(?:/[A-Z](?:\d)?)*$", re.IGNORECASE)
 
 def detect_schedule_layout(inspected_workbook: dict[str, Any]) -> LayoutDetectionResult:
     candidates: list[LayoutDetectionResult] = []
-    for sheet in inspected_workbook.get("sheets", []):
+    sheets = inspected_workbook.get("sheets", [])
+    for sheet_index, sheet in enumerate(sheets):
         header_options = sheet.get("candidate_header_rows") or []
         if not header_options:
             candidates.append(
@@ -41,7 +43,11 @@ def detect_schedule_layout(inspected_workbook: dict[str, Any]) -> LayoutDetectio
                     layout_type=UNKNOWN,
                     confidence=0.05,
                     warnings=["NO_HEADER_ROW"],
-                    diagnostics={"sheet_score": _sheet_base_score(sheet), "reason": "No candidate header row"},
+                    diagnostics={
+                        "sheet_index": sheet_index,
+                        "sheet_score": _sheet_base_score(sheet),
+                        "reason": "No candidate header row",
+                    },
                 )
             )
             continue
@@ -50,7 +56,9 @@ def detect_schedule_layout(inspected_workbook: dict[str, Any]) -> LayoutDetectio
             date_columns = [
                 col for col in sheet.get("candidate_date_columns", []) if col.get("row") == header_row
             ]
-            candidates.append(_score_layout_for_header(sheet, header, date_columns))
+            candidate = _score_layout_for_header(sheet, header, date_columns)
+            candidate.diagnostics["sheet_index"] = sheet_index
+            candidates.append(candidate)
 
     if not candidates:
         return LayoutDetectionResult(
@@ -60,7 +68,27 @@ def detect_schedule_layout(inspected_workbook: dict[str, Any]) -> LayoutDetectio
             confidence=0.0,
             warnings=["NO_SHEETS"],
         )
-    return max(candidates, key=lambda item: item.diagnostics.get("overall_score", 0))
+    best_candidate = max(candidates, key=_candidate_score)
+    first_sheet_name = sheets[0].get("sheet_name") if sheets else None
+    first_sheet_candidates = [
+        candidate for candidate in candidates if candidate.sheet_name == first_sheet_name and _is_usable_candidate(candidate)
+    ]
+    if not first_sheet_candidates:
+        return best_candidate
+
+    selected = max(first_sheet_candidates, key=_candidate_score)
+    selected.diagnostics["selection_reason"] = "first_sheet_priority"
+    selected.diagnostics["selected_first_sheet"] = selected.sheet_name
+    if best_candidate.sheet_name != selected.sheet_name and _candidate_score(best_candidate) > _candidate_score(selected):
+        if FIRST_SHEET_SELECTED_OVER_HIGHER_SCORING_SHEET not in selected.warnings:
+            selected.warnings.append(FIRST_SHEET_SELECTED_OVER_HIGHER_SCORING_SHEET)
+        selected.diagnostics["ignored_higher_scoring_sheet"] = {
+            "sheet_name": best_candidate.sheet_name,
+            "header_row": best_candidate.header_row,
+            "layout_type": best_candidate.layout_type,
+            "overall_score": best_candidate.diagnostics.get("overall_score"),
+        }
+    return selected
 
 
 def _score_layout_for_header(sheet: dict[str, Any], header: dict[str, Any], date_columns: list[dict[str, Any]]) -> LayoutDetectionResult:
@@ -139,6 +167,18 @@ def _sheet_base_score(sheet: dict[str, Any]) -> float:
     score += min(date_count, 31) * 0.5
     score += min(float(sheet.get("non_empty_cell_density") or 0) * 20, 5)
     return score
+
+
+def _candidate_score(candidate: LayoutDetectionResult) -> float:
+    return float(candidate.diagnostics.get("overall_score") or 0)
+
+
+def _is_usable_candidate(candidate: LayoutDetectionResult) -> bool:
+    return (
+        candidate.layout_type != UNKNOWN
+        and candidate.header_row is not None
+        and bool(candidate.likely_date_columns)
+    )
 
 
 def _likely_staff_range(sample_rows: list[list[Any]], header_row: int, header: dict[str, Any]) -> dict[str, int | None]:

@@ -70,6 +70,7 @@ def test_index_renders_upload_page():
     assert "確認排班表" in body
     assert "下載修正 JSON" in body
     assert "Excel 貼上表格" in body
+    assert "預設顯示員工排班彙總" in body
     assert "<h2>匯出</h2>" in body
     assert "<h2>匯出 / JSON</h2>" not in body
     assert "exportTableDatasetSelect" in body
@@ -100,6 +101,10 @@ def test_index_renders_upload_page():
     assert "holidayUploadInput" in body
     assert "check-schedule-panel" in body
     assert "entriesTableHead" in body
+    assert "entrySearch" not in body
+    assert "staffFilter" not in body
+    assert "unresolvedOnly" not in body
+    assert "warningsOnly" not in body
     assert "GovHK 官方假期" in body
     assert '<option value="2025">2025</option>' in body
     assert '<option value="2026" selected>2026</option>' in body
@@ -261,7 +266,8 @@ def test_export_json_step_has_excel_copyable_table_selection():
     assert "function copyExportTableSelection" in script
     assert "function exportTableToTsv" in script
     assert "function exportScheduleEntryRows" in script
-    assert 'DEFAULT_EXPORT_TABLE_DATASET = "compare_rows"' in script
+    assert 'DEFAULT_EXPORT_TABLE_DATASET = "roster_summary"' in script
+    assert script.index('id: "roster_summary"') < script.index('id: "compare_rows"')
     assert "exportTableUserSelected" in script
     assert '["actual_hours", "實際時數"]' in script
     assert "actual_hours: row.has_actual ? formatRosterHours(actualDurationHours(row.actual_in, row.actual_out)) : \"\"" in script
