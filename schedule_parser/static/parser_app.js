@@ -4170,6 +4170,7 @@ function renderOcrTable(rows) {
     row.date,
     row.in,
     row.out,
+    htmlCell(formatOcrSourceHtml(row)),
   ]);
 }
 
@@ -4255,6 +4256,10 @@ function mergeOcrDailyRows(rows) {
         out: null,
         source_filename: row.source_filename || "",
         source_filenames: [],
+        source_part_filenames: [],
+        source_pages: [],
+        source_card_nos: [],
+        source_parts: [],
         original_name: row.original_name || name || "",
         assigned_staff_name: row.assigned_staff_name || "",
         all_times: [],
@@ -4265,6 +4270,10 @@ function mergeOcrDailyRows(rows) {
     target.name = target.name || name || null;
     target.date = target.date || date || null;
     appendUnique(target.source_filenames, row.source_filenames || [row.source_filename].filter(Boolean));
+    appendUnique(target.source_part_filenames, row.source_part_filenames || [row.source_part_filename].filter(Boolean));
+    appendUnique(target.source_pages, row.source_pages || [row.source_page].filter(Boolean));
+    appendUnique(target.source_card_nos, row.source_card_nos || [row.source_card_no].filter(Boolean));
+    appendUniqueSourceParts(target.source_parts, sourcePartsFromRow(row));
     appendUnique(target.warnings, row.warnings || []);
     appendUnique(target.all_times, extractTimes([row.all_times, row.in, row.out]));
     target.all_times = [...new Set(target.all_times)].sort(compareTimes);
@@ -4278,8 +4287,47 @@ function mergeOcrDailyRows(rows) {
     if (!target.source_filename && target.source_filenames.length) {
       target.source_filename = target.source_filenames[0];
     }
+    if (!target.source_page && target.source_pages.length) target.source_page = target.source_pages[0];
+    if (!target.source_card_no && target.source_card_nos.length) target.source_card_no = target.source_card_nos[0];
+    if (!target.source_part_filename && target.source_part_filenames.length) target.source_part_filename = target.source_part_filenames[0];
   });
   return [...merged.values()];
+}
+
+function formatOcrSourceHtml(row) {
+  const parts = [];
+  const pages = row.source_pages || (row.source_page ? [row.source_page] : []);
+  const cards = row.source_card_nos || (row.source_card_no ? [row.source_card_no] : []);
+  if (pages.length) parts.push(`p.${pages.join(",")}`);
+  if (cards.length) parts.push(`card ${cards.join("/")}`);
+  const partNames = row.source_part_filenames || (row.source_part_filename ? [row.source_part_filename] : []);
+  const sourceText = parts.join(" · ") || partNames.join(", ") || "";
+  const links = sourceLinksHtml(sourceFilenamesForRow(row), row.name || row.ocr_name || "");
+  return [escapeHtml(sourceText), links].filter(Boolean).join(sourceText && links ? "<br>" : "");
+}
+
+function sourcePartsFromRow(row) {
+  const parts = [];
+  if (Array.isArray(row.source_parts)) {
+    row.source_parts.forEach((part) => {
+      if (part && typeof part === "object") parts.push(part);
+    });
+  }
+  const ownPart = {};
+  ["source_page", "source_card_no", "source_part_filename", "source_part_label"].forEach((key) => {
+    if (row[key] !== null && row[key] !== undefined && row[key] !== "") ownPart[key] = row[key];
+  });
+  if (Object.keys(ownPart).length) parts.push(ownPart);
+  return parts;
+}
+
+function appendUniqueSourceParts(target, values) {
+  const source = Array.isArray(values) ? values : [values];
+  source.forEach((value) => {
+    if (!value || typeof value !== "object") return;
+    const normalized = JSON.stringify(value);
+    if (!target.some((item) => JSON.stringify(item) === normalized)) target.push(value);
+  });
 }
 
 function extractTimes(values) {

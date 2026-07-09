@@ -200,6 +200,93 @@ def test_merge_preserves_confirmed_staff_assignment_fields():
     assert rows[0]["original_name"] == "Luk Ka Yan"
 
 
+def test_ocr_client_attaches_source_metadata_to_rows(monkeypatch):
+    def fake_post(payload, *, api_key):
+        return {
+            "model": "fake-model",
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "document_type": "logsheet",
+                                "month_year": "January 2025",
+                                "daily_rows": [
+                                    {
+                                        "name": "Poon Wai Ching Crystal",
+                                        "date": "17",
+                                        "morning_in": "09:41",
+                                        "afternoon_out": "20:15",
+                                    }
+                                ],
+                            }
+                        )
+                    },
+                }
+            ],
+            "usage": {"total_tokens": 10},
+        }
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setattr(openrouter_ocr, "_post_openrouter", fake_post)
+
+    result = openrouter_ocr.ocr_logsheet_with_openrouter(
+        b"fake image",
+        "Poon Wai Ching Crystal__card_2.jpg",
+        mime_type="image/jpeg",
+        source_filename="Poon Wai Ching Crystal.jpg",
+        source_metadata={
+            "source_type": "dual_card_image",
+            "source_card_no": 2,
+            "source_part_filename": "Poon Wai Ching Crystal__card_2.jpg",
+            "source_part_label": "card 2",
+        },
+    )
+
+    row = result["daily_rows"][0]
+    assert row["source_filename"] == "Poon Wai Ching Crystal.jpg"
+    assert row["source_card_no"] == "2"
+    assert row["source_part_filename"] == "Poon Wai Ching Crystal__card_2.jpg"
+    assert row["source_parts"] == [
+        {
+            "source_card_no": "2",
+            "source_part_filename": "Poon Wai Ching Crystal__card_2.jpg",
+            "source_part_label": "card 2",
+        }
+    ]
+
+
+def test_merge_preserves_source_parts_from_multiple_cards():
+    rows = openrouter_ocr.merge_logsheet_daily_rows(
+        [
+            {
+                "name": "A",
+                "date": "2025-01-14",
+                "in": "09:45",
+                "out": "20:15",
+                "source_filename": "A.jpg",
+                "source_card_no": "1",
+                "source_part_filename": "A__card_1.jpg",
+            },
+            {
+                "name": "A",
+                "date": "2025-01-14",
+                "in": "09:40",
+                "out": "20:16",
+                "source_filename": "A.jpg",
+                "source_card_no": "2",
+                "source_part_filename": "A__card_2.jpg",
+            },
+        ]
+    )
+
+    assert rows[0]["in"] == "09:40"
+    assert rows[0]["out"] == "20:16"
+    assert rows[0]["source_card_nos"] == ["1", "2"]
+    assert rows[0]["source_part_filenames"] == ["A__card_1.jpg", "A__card_2.jpg"]
+
+
 def test_normalize_uses_context_hint_for_month_year():
     rows = openrouter_ocr.normalize_logsheet_daily_rows(
         {"entries": [{"date": "21", "morning_in": "09:40", "afternoon_out": "18:46"}]},

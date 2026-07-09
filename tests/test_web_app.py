@@ -483,7 +483,7 @@ def test_ocr_invalid_extension_returns_400_json():
 def test_ocr_missing_api_key_returns_503_json(monkeypatch):
     from schedule_parser.openrouter_ocr import OpenRouterOCRConfigError
 
-    def fake_ocr(_file_bytes, _filename, *, mime_type=None, prompt=None):
+    def fake_ocr(_file_bytes, _filename, *, mime_type=None, prompt=None, source_filename=None, source_metadata=None):
         raise OpenRouterOCRConfigError("OPENROUTER_API_KEY is not set.")
 
     monkeypatch.setattr("schedule_parser.web.ocr_logsheet_with_openrouter", fake_ocr)
@@ -502,7 +502,7 @@ def test_ocr_missing_api_key_returns_503_json(monkeypatch):
 def test_ocr_logsheet_success_uses_openrouter_client(monkeypatch):
     calls = []
 
-    def fake_ocr(file_bytes, filename, *, mime_type=None, prompt=None):
+    def fake_ocr(file_bytes, filename, *, mime_type=None, prompt=None, source_filename=None, source_metadata=None):
         calls.append((file_bytes, filename, mime_type, prompt))
         assert prompt == "保留簽名欄位"
         suffix = "21" if filename == "logsheet-1.png" else "26"
@@ -555,7 +555,7 @@ def test_ocr_logsheet_success_uses_openrouter_client(monkeypatch):
 def test_ocr_logsheet_adds_d_and_g_project_prompt(monkeypatch):
     calls = []
 
-    def fake_ocr(file_bytes, filename, *, mime_type=None, prompt=None):
+    def fake_ocr(file_bytes, filename, *, mime_type=None, prompt=None, source_filename=None, source_metadata=None):
         calls.append((file_bytes, filename, mime_type, prompt))
         return {
             "source_filename": filename,
@@ -595,7 +595,7 @@ def test_ocr_logsheet_enhances_image_by_default(monkeypatch):
     original = png_bytes()
     calls = []
 
-    def fake_ocr(file_bytes, filename, *, mime_type=None, prompt=None):
+    def fake_ocr(file_bytes, filename, *, mime_type=None, prompt=None, source_filename=None, source_metadata=None):
         calls.append((file_bytes, filename, mime_type))
         return {
             "source_filename": filename,
@@ -628,7 +628,7 @@ def test_ocr_logsheet_can_disable_image_enhancement(monkeypatch):
     original = png_bytes()
     calls = []
 
-    def fake_ocr(file_bytes, filename, *, mime_type=None, prompt=None):
+    def fake_ocr(file_bytes, filename, *, mime_type=None, prompt=None, source_filename=None, source_metadata=None):
         calls.append((file_bytes, filename, mime_type))
         return {
             "source_filename": filename,
@@ -654,6 +654,64 @@ def test_ocr_logsheet_can_disable_image_enhancement(monkeypatch):
     preprocessing = payload["ocr"]["results"][0]["preprocessing"]
     assert preprocessing["enabled"] is False
     assert preprocessing["applied"] is False
+
+
+def test_oil_street_dual_card_image_is_split_before_ocr(monkeypatch):
+    original = png_bytes(size=(1300, 1000))
+    calls = []
+
+    def fake_ocr(file_bytes, filename, *, mime_type=None, prompt=None, source_filename=None, source_metadata=None):
+        calls.append((file_bytes, filename, mime_type, source_filename, source_metadata))
+        card_no = str(source_metadata.get("source_card_no"))
+        return {
+            "source_filename": source_filename,
+            "source_part_filename": filename,
+            "source_metadata": source_metadata,
+            "configured_model": "qwen/qwen3.6-35b-a3b",
+            "response_model": "qwen/qwen3.6-35b-a3b",
+            "text": "{}",
+            "structured": {},
+            "daily_rows": [
+                {
+                    "name": "Poon Wai Ching Crystal",
+                    "date": f"2025-01-0{card_no}",
+                    "in": "09:40",
+                    "out": "18:46",
+                    "source_filename": source_filename,
+                    "source_filenames": [source_filename],
+                    "source_card_no": card_no,
+                    "source_part_filename": filename,
+                    "all_times": ["09:40", "18:46"],
+                    "warnings": [],
+                }
+            ],
+            "usage": {},
+            "annotations": [],
+        }
+
+    monkeypatch.setattr("schedule_parser.web.ocr_logsheet_with_openrouter", fake_ocr)
+    response = client().post(
+        "/api/ocr-logsheet",
+        data={"logsheet": (BytesIO(original), "Poon Wai Ching Crystal.png"), "enhance_image": "0"},
+        content_type="multipart/form-data",
+    )
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["ok"] is True
+    assert len(calls) == 2
+    assert [call[1] for call in calls] == [
+        "Poon_Wai_Ching_Crystal__card_1.jpg",
+        "Poon_Wai_Ching_Crystal__card_2.jpg",
+    ]
+    assert [call[4]["source_card_no"] for call in calls] == [1, 2]
+    assert payload["ocr"]["source_count"] == 1
+    assert payload["ocr"]["ocr_part_count"] == 2
+    assert len(payload["ocr"]["daily_rows"]) == 2
+    assert payload["ocr"]["source_part_filenames"] == [
+        "Poon_Wai_Ching_Crystal__card_1.jpg",
+        "Poon_Wai_Ching_Crystal__card_2.jpg",
+    ]
 
 
 def test_compare_roster_success_returns_summary():

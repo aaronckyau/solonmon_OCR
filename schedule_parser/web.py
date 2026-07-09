@@ -14,7 +14,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.utils import secure_filename
 
 from .d_and_g import parse_d_and_g_schedule
-from .image_enhancement import prepare_ocr_image
+from .image_enhancement import PreparedOcrSource, prepare_ocr_image, prepare_oil_street_timecard_sources
 from .oil_street import parse_oil_street_schedule
 from .openrouter_ocr import (
     OpenRouterOCRAPIError,
@@ -86,21 +86,26 @@ def create_app() -> Flask:
                 raw_bytes = uploaded.read()
                 if not raw_bytes:
                     return _error_response(f"{safe_name} 是空白檔案。", 400)
-                ocr_bytes, ocr_mime_type, preprocessing = prepare_ocr_image(
+                sources = _prepared_ocr_sources(
+                    project_profile,
                     raw_bytes,
                     safe_name,
                     mime_type=uploaded.mimetype or None,
-                    enabled=enhance_images,
+                    enhance_images=enhance_images,
                 )
-                result = ocr_logsheet_with_openrouter(
-                    ocr_bytes,
-                    safe_name,
-                    mime_type=ocr_mime_type or uploaded.mimetype or None,
-                    prompt=prompt,
-                )
-                result["preprocessing"] = preprocessing
-                results.append(result)
-                daily_rows.extend(result.get("daily_rows") or [])
+                for source in sources:
+                    result = ocr_logsheet_with_openrouter(
+                        source.file_bytes,
+                        source.filename,
+                        mime_type=source.mime_type or uploaded.mimetype or None,
+                        prompt=prompt,
+                        source_filename=source.source_filename,
+                        source_metadata=source.metadata,
+                    )
+                    result["preprocessing"] = source.preprocessing
+                    result["source_metadata"] = {**(result.get("source_metadata") or {}), **source.metadata}
+                    results.append(result)
+                    daily_rows.extend(result.get("daily_rows") or [])
             return jsonify({"ok": True, "ocr": _combined_ocr_result(results, daily_rows)})
         except OpenRouterOCRConfigError as exc:
             return _error_response(str(exc), 503)
@@ -220,6 +225,39 @@ def _asset_version(static_folder: str | None) -> str:
 def _project_profile_from_request() -> str:
     value = (request.form.get("project_profile") or "oil_street").strip().lower()
     return value if value in {"oil_street", "heritage", "d_and_g"} else "oil_street"
+
+
+def _prepared_ocr_sources(
+    project_profile: str,
+    raw_bytes: bytes,
+    filename: str,
+    *,
+    mime_type: str | None,
+    enhance_images: bool,
+) -> list[PreparedOcrSource]:
+    if project_profile == "oil_street":
+        return prepare_oil_street_timecard_sources(
+            raw_bytes,
+            filename,
+            mime_type=mime_type,
+            enabled=enhance_images,
+        )
+    ocr_bytes, ocr_mime_type, preprocessing = prepare_ocr_image(
+        raw_bytes,
+        filename,
+        mime_type=mime_type,
+        enabled=enhance_images,
+    )
+    return [
+        PreparedOcrSource(
+            file_bytes=ocr_bytes,
+            filename=filename,
+            mime_type=ocr_mime_type,
+            source_filename=filename,
+            preprocessing=preprocessing,
+            metadata={"source_type": "single", "source_part_count": 1},
+        )
+    ]
 
 
 def _parse_schedule_for_profile(project_profile: str, raw_bytes: bytes, filename: str):
@@ -377,7 +415,12 @@ def _month_label(month: str) -> str:
 
 
 def _combined_ocr_result(results: list[dict[str, Any]], daily_rows: list[dict[str, Any]]) -> dict[str, Any]:
-    source_filenames = [result.get("source_filename") or "" for result in results if result.get("source_filename")]
+    source_filenames = _unique_non_empty(result.get("source_filename") for result in results)
+    source_part_filenames = _unique_non_empty(
+        result.get("source_part_filename")
+        or (result.get("source_metadata") or {}).get("source_part_filename")
+        for result in results
+    )
     if len(results) == 1 and isinstance(results[0].get("page_results"), list):
         merged_rows = results[0].get("daily_rows") or daily_rows
     else:
@@ -389,9 +432,11 @@ def _combined_ocr_result(results: list[dict[str, Any]], daily_rows: list[dict[st
         if isinstance(page, dict)
     ]
     return {
-        "source_count": len(results),
+        "source_count": len(source_filenames),
+        "ocr_part_count": len(results),
         "source_filename": ", ".join(source_filenames),
         "source_filenames": source_filenames,
+        "source_part_filenames": source_part_filenames,
         "configured_model": _first_non_empty(result.get("configured_model") for result in results),
         "response_model": _first_non_empty(result.get("response_model") for result in results),
         "finish_reason": _first_non_empty(result.get("finish_reason") for result in results),
@@ -405,6 +450,15 @@ def _combined_ocr_result(results: list[dict[str, Any]], daily_rows: list[dict[st
         "page_results": page_results,
         "usage": _combined_usage(results),
     }
+
+
+def _unique_non_empty(values) -> list[str]:
+    result: list[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        if text and text not in result:
+            result.append(text)
+    return result
 
 
 def _combined_usage(results: list[dict[str, Any]]) -> dict[str, Any]:

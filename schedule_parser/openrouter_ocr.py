@@ -111,6 +111,15 @@ PUNCH_TIME_FIELD_NAMES = (
     "下班",
     "時間",
 )
+CARD_FIELD_NAMES = (
+    "card_no",
+    "card",
+    "card_number",
+    "timecard_no",
+    "time_card_no",
+    "sheet_no",
+    "part",
+)
 MONTHS = {
     "jan": 1,
     "january": 1,
@@ -157,6 +166,8 @@ def ocr_logsheet_with_openrouter(
     *,
     mime_type: str | None = None,
     prompt: str | None = None,
+    source_filename: str | None = None,
+    source_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     api_key = _config_value("OPENROUTER_API_KEY") or _config_value("OPENROUTER") or _config_value("openrouter")
     if not api_key:
@@ -169,10 +180,11 @@ def ocr_logsheet_with_openrouter(
         if len(pdf_pages) > 1:
             return _ocr_logsheet_pdf_pages_with_openrouter(
                 pdf_pages,
-                filename,
+                source_filename or filename,
                 api_key=api_key,
                 model=model,
                 prompt=prompt,
+                source_metadata=source_metadata,
             )
 
     return _ocr_logsheet_once_with_openrouter(
@@ -182,7 +194,8 @@ def ocr_logsheet_with_openrouter(
         model=model,
         mime_type=detected_mime,
         prompt=prompt,
-        source_filename=filename,
+        source_filename=source_filename or filename,
+        source_metadata=source_metadata,
     )
 
 
@@ -195,6 +208,7 @@ def _ocr_logsheet_once_with_openrouter(
     mime_type: str,
     prompt: str | None = None,
     source_filename: str | None = None,
+    source_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload = build_logsheet_ocr_payload(
         file_bytes,
@@ -209,9 +223,12 @@ def _ocr_logsheet_once_with_openrouter(
     text = _message_text(message.get("content"))
     structured = _extract_json_object(text)
     daily_rows = normalize_logsheet_daily_rows(structured, source_filename or payload_filename, context_hint=prompt)
+    daily_rows = _apply_source_metadata_to_rows(daily_rows, source_metadata)
 
     return {
         "source_filename": source_filename or payload_filename,
+        "source_part_filename": payload_filename if payload_filename != (source_filename or payload_filename) else "",
+        "source_metadata": source_metadata or {},
         "configured_model": model,
         "response_model": response.get("model") or "",
         "finish_reason": choice.get("finish_reason") or "",
@@ -230,6 +247,7 @@ def _ocr_logsheet_pdf_pages_with_openrouter(
     api_key: str,
     model: str,
     prompt: str | None = None,
+    source_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     page_results: list[dict[str, Any] | None] = [None] * len(pdf_pages)
     errors: list[str] = []
@@ -237,6 +255,15 @@ def _ocr_logsheet_pdf_pages_with_openrouter(
 
     def ocr_page(page_number: int, page_bytes: bytes, page_filename: str) -> dict[str, Any]:
         page_prompt = _page_prompt(prompt, page_number, len(pdf_pages))
+        page_metadata = {
+            **(source_metadata or {}),
+            "source_type": "pdf_page",
+            "source_page": page_number,
+            "source_part_index": page_number,
+            "source_part_count": len(pdf_pages),
+            "source_part_filename": page_filename,
+            "source_part_label": f"page {page_number}",
+        }
         return _ocr_logsheet_once_with_openrouter(
             page_bytes,
             page_filename,
@@ -245,6 +272,7 @@ def _ocr_logsheet_pdf_pages_with_openrouter(
             mime_type=SUPPORTED_PDF_MIME_TYPE,
             prompt=page_prompt,
             source_filename=source_filename,
+            source_metadata=page_metadata,
         )
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -474,6 +502,7 @@ def normalize_logsheet_daily_rows(
         if not times and not (keep_visible_rows_without_times and ocr_name_hint):
             continue
         row_name = filename_name_hint or ocr_name_hint
+        card_no = _normalize_card_no(_first_present(item, CARD_FIELD_NAMES))
         row = {
             "name": row_name,
             "date": _normalize_date(_first_present(item, DATE_FIELD_NAMES), year_month),
@@ -484,12 +513,55 @@ def normalize_logsheet_daily_rows(
             "all_times": sorted(set(times), key=_time_minutes),
             "warnings": item.get("warnings") if isinstance(item.get("warnings"), list) else [],
         }
+        if card_no:
+            row["source_card_no"] = card_no
         if row["all_times"]:
             row["in"] = row["all_times"][0]
             row["out"] = row["all_times"][-1] if len(row["all_times"]) > 1 else None
         rows.append(row)
 
     return merge_logsheet_daily_rows(rows)
+
+
+def _apply_source_metadata_to_rows(
+    rows: list[dict[str, Any]],
+    source_metadata: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    if not source_metadata:
+        return rows
+    metadata = {key: value for key, value in source_metadata.items() if value not in (None, "")}
+    if not metadata:
+        return rows
+    for row in rows:
+        if "source_page" in metadata:
+            row["source_page"] = metadata["source_page"]
+        if "source_card_no" in metadata:
+            row["source_card_no"] = str(metadata["source_card_no"])
+        if "source_part_filename" in metadata:
+            row["source_part_filename"] = metadata["source_part_filename"]
+        if "source_part_label" in metadata:
+            row["source_part_label"] = metadata["source_part_label"]
+        if "source_crop_box" in metadata:
+            row["source_crop_box"] = metadata["source_crop_box"]
+        part = _source_part_from_row(row)
+        if part:
+            row["source_parts"] = [part]
+    return rows
+
+
+def _normalize_card_no(value: Any) -> str | None:
+    text = _string_or_none(value)
+    if not text:
+        return None
+    match = re.search(r"\b([12])\b", text)
+    if match:
+        return match.group(1)
+    lowered = text.lower()
+    if "first" in lowered or "blue" in lowered:
+        return "1"
+    if "second" in lowered or "orange" in lowered:
+        return "2"
+    return text
 
 
 def _is_d_and_g_context(context_hint: str | None) -> bool:
@@ -537,6 +609,20 @@ def merge_logsheet_daily_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]
         target["date"] = target["date"] or date
         target["source_filename"] = target["source_filename"] or source_filename
         _append_unique(target["source_filenames"], row.get("source_filenames") or [source_filename])
+        source_part_filenames = _present_list(row.get("source_part_filenames") or [row.get("source_part_filename")])
+        source_pages = _present_list(row.get("source_pages") or [row.get("source_page")])
+        source_card_nos = _present_list(row.get("source_card_nos") or [row.get("source_card_no")])
+        if source_part_filenames:
+            _append_unique(target.setdefault("source_part_filenames", []), source_part_filenames)
+        if source_pages:
+            _append_unique(target.setdefault("source_pages", []), source_pages)
+        if source_card_nos:
+            _append_unique(target.setdefault("source_card_nos", []), source_card_nos)
+        source_part = _source_part_from_row(row)
+        if source_part:
+            _append_source_part(target.setdefault("source_parts", []), source_part)
+        for part in row.get("source_parts") or []:
+            _append_source_part(target.setdefault("source_parts", []), part if isinstance(part, dict) else {})
         _append_unique(target["warnings"], row.get("warnings") or [])
         punch_times = _extract_time_values([row.get("all_times")])
         explicit_in = _extract_time_values([row.get("in")])
@@ -554,6 +640,12 @@ def merge_logsheet_daily_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]
             if explicit_out:
                 current_out = _string_or_none(target.get("out"))
                 target["out"] = max([time for time in [current_out, explicit_out[0]] if time], key=_time_minutes)
+        if target.get("source_pages") and not target.get("source_page"):
+            target["source_page"] = target["source_pages"][0]
+        if target.get("source_card_nos") and not target.get("source_card_no"):
+            target["source_card_no"] = target["source_card_nos"][0]
+        if target.get("source_part_filenames") and not target.get("source_part_filename"):
+            target["source_part_filename"] = target["source_part_filenames"][0]
 
     return [merged[key] for key in order]
 
@@ -575,6 +667,13 @@ Required JSON shape:
       "date": null,
       "in": null,
       "out": null,
+      "morning_in": null,
+      "morning_out": null,
+      "afternoon_in": null,
+      "afternoon_out": null,
+      "overtime_in": null,
+      "overtime_out": null,
+      "card_no": null,
       "all_times": [],
       "warnings": []
     }}
@@ -590,6 +689,10 @@ Rules:
 - For register/sign-in sheet PDFs, preserve each helper/staff name in the row-level "name" field.
 - Treat columns such as NAME, HELPER, DATE, SIGN IN, SIGN OUT, CHECK IN, and CHECK OUT as valid source columns.
 - For D&G/Daniel & Co promoter work record sheets, the current image is the source of truth: output every visible non-blank person/table row, including rows with only a readable name/date/signature and no readable punch time.
+- For Oil Street Comix timecards, there can be two half-month card formats: blue Card 1 usually covers dates 1-15, orange Card 2 usually covers dates 16-31.
+- If a single image/PDF page contains both cards, extract both cards independently and do not drop either side.
+- For Oil Street timecards, include "card_no" as "1" or "2" when visible or clear from the blue/orange card design.
+- Preserve MORNING IN/OUT, AFTERNOON IN/OUT, and OVER TIME IN/OUT in their specific JSON fields when readable, then also include every readable punch in "all_times".
 - For each date/day row, collect every readable handwritten punch time in that row from MORNING, AFTERNOON, and OVER TIME columns.
 - If a handwritten time includes the day prefix, such as "21 09:40", normalize the time to "09:40".
 - The printed or left-margin row number is the date/day only. Never combine that row number with a nearby time, and never treat it as a punch time.
@@ -817,6 +920,27 @@ def _append_unique(target: list[Any], values: Any) -> None:
             continue
         if value not in target:
             target.append(value)
+
+
+def _present_list(values: Any) -> list[Any]:
+    source = values if isinstance(values, list) else [values]
+    return [value for value in source if value not in (None, "")]
+
+
+def _append_source_part(target: list[dict[str, Any]], part: dict[str, Any]) -> None:
+    if not part:
+        return
+    if part not in target:
+        target.append(part)
+
+
+def _source_part_from_row(row: dict[str, Any]) -> dict[str, Any]:
+    part: dict[str, Any] = {}
+    for key in ("source_page", "source_card_no", "source_part_filename", "source_part_label", "source_crop_box"):
+        value = row.get(key)
+        if value not in (None, ""):
+            part[key] = value
+    return part
 
 
 def _infer_staff_name_from_filename(source_filename: str) -> str | None:
