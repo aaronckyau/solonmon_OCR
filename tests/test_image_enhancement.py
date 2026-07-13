@@ -6,7 +6,12 @@ from pathlib import Path
 from PIL import Image
 import pytest
 
-from schedule_parser.image_enhancement import OUTPUT_MIME_TYPE, prepare_ocr_image, prepare_oil_street_timecard_sources
+from schedule_parser.image_enhancement import (
+    OUTPUT_MIME_TYPE,
+    _timecard_column_crop_bounds,
+    prepare_ocr_image,
+    prepare_oil_street_timecard_sources,
+)
 
 
 def _sample_png_bytes(size=(320, 520)) -> bytes:
@@ -132,6 +137,14 @@ def test_prepare_oil_street_all_staff_pdf_splits_one_source_per_card():
     assert [source.metadata["source_card_no"] for source in sources[:4]] == [1, 2, 1, 2]
     assert sources[0].filename.endswith("__card_1.jpg")
     assert sources[1].filename.endswith("__card_2.jpg")
+    jade_card_1 = next(
+        source
+        for source in sources
+        if source.metadata["source_staff_name_hint"].replace(" ", "") == "LamWaiChingJade"
+        and source.metadata["source_card_no"] == 1
+    )
+    jade_crop = jade_card_1.metadata["source_crop_box"]
+    assert jade_crop["right"] - jade_crop["left"] >= 280
 
 
 def test_prepare_oil_street_pdf_cards_are_large_enough_for_stamp_ocr():
@@ -163,3 +176,20 @@ def test_prepare_oil_street_pdf_cards_are_large_enough_for_stamp_ocr():
     with Image.open(BytesIO(source.file_bytes)) as image:
         assert image.width >= 800
         assert image.height >= 2000
+
+
+def test_timecard_column_crop_bounds_follow_irregular_card_positions():
+    image = Image.new("RGB", (760, 300), "white")
+    pixels = image.load()
+    starts = [20, 120, 225, 335, 450, 565]
+    ends = [100, 205, 315, 430, 545, 690]
+    for left, right in zip(starts, ends):
+        for y in range(25, 46):
+            for x in range(left, right):
+                pixels[x, y] = (35, 90, 190)
+
+    bounds = _timecard_column_crop_bounds(image, 6, 1)
+
+    assert len(bounds) == 6
+    assert bounds[-1][0] < starts[-1]
+    assert bounds[-1][1] > ends[-1]

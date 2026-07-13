@@ -297,6 +297,12 @@ def _prepare_oil_street_pdf_timecard_sources(
         row_images = _pdf_page_timecard_row_images(page)
         if not row_images:
             continue
+        reference_card_no = 1 if 1 in row_images else min(row_images)
+        column_bounds = _timecard_column_crop_bounds(
+            row_images[reference_card_no],
+            len(labels),
+            reference_card_no,
+        )
 
         for staff_index, staff_name_hint in enumerate(labels, start=1):
             for card_no, row_image in sorted(row_images.items()):
@@ -305,6 +311,7 @@ def _prepare_oil_street_pdf_timecard_sources(
                     staff_index - 1,
                     len(labels),
                     card_no,
+                    column_bounds=column_bounds,
                 )
                 crop_size = {"width": card.width, "height": card.height}
                 card_scale_factor = 1.0
@@ -476,12 +483,19 @@ def _crop_timecard_from_row(
     index: int,
     count: int,
     card_no: int,
+    *,
+    column_bounds: list[tuple[int, int]] | None = None,
 ) -> tuple[Image.Image, dict[str, int]]:
-    left, right = _timecard_row_horizontal_bounds(image, count, card_no)
-    pitch = (right - left) / max(count, 1)
-    overlap = max(6, round(pitch * 0.045))
-    crop_left = max(0, round(left + index * pitch) - overlap)
-    crop_right = min(image.width, round(left + (index + 1) * pitch) + overlap)
+    bounds = column_bounds or _timecard_column_crop_bounds(image, count, card_no)
+    if 0 <= index < len(bounds):
+        crop_left, crop_right = bounds[index]
+    else:
+        left, right = _timecard_row_horizontal_bounds(image, count, card_no)
+        pitch = (right - left) / max(count, 1)
+        overlap = max(6, round(pitch * 0.08))
+        crop_left = max(0, round(left + index * pitch) - overlap)
+        crop_right = min(image.width, round(left + (index + 1) * pitch) + overlap)
+    pitch = crop_right - crop_left
     header_top = _timecard_header_top(image, card_no)
     crop_top = max(0, header_top - max(8, round(pitch * 0.08)))
     crop_bottom = min(image.height, crop_top + round((crop_right - crop_left) * 2.55))
@@ -496,9 +510,50 @@ def _crop_timecard_from_row(
     }
 
 
+def _timecard_column_crop_bounds(
+    image: Image.Image,
+    count: int,
+    card_no: int,
+) -> list[tuple[int, int]]:
+    intervals = _detect_timecard_header_intervals(image, count, card_no)
+    if len(intervals) != count:
+        return []
+
+    starts = [left for left, _right in intervals]
+    pitches = sorted(right - left for left, right in zip(starts, starts[1:]))
+    if not pitches:
+        return [(0, image.width)]
+    typical_pitch = pitches[len(pitches) // 2]
+    margin = max(6, round(typical_pitch * 0.05))
+    bounds: list[tuple[int, int]] = []
+    for index, start in enumerate(starts):
+        if index + 1 < len(starts):
+            end = starts[index + 1]
+        else:
+            remaining = image.width - start
+            inferred_end = max(intervals[index][1], start + typical_pitch)
+            end = image.width if remaining <= typical_pitch * 1.35 else inferred_end
+        bounds.append((max(0, start - margin), min(image.width, end + margin)))
+    return bounds
+
+
 def _timecard_row_horizontal_bounds(image: Image.Image, count: int, card_no: int) -> tuple[int, int]:
     if count > 3:
         return 0, image.width
+    selected = _detect_timecard_header_intervals(image, count, card_no)
+    if not selected:
+        return 0, image.width
+    left = min(item[0] for item in selected)
+    right = max(item[1] for item in selected)
+    margin = max(3, round((right - left) / max(count, 1) * 0.05))
+    return max(0, left - margin), min(image.width, right + margin)
+
+
+def _detect_timecard_header_intervals(
+    image: Image.Image,
+    count: int,
+    card_no: int,
+) -> list[tuple[int, int]]:
     sample, scale = _resize_for_detection(image)
     pixels = sample.load()
     cutoff = max(1, round(sample.height * 0.55))
@@ -520,12 +575,9 @@ def _timecard_row_horizontal_bounds(image: Image.Image, count: int, card_no: int
         if len(intervals) == count:
             candidates.append(intervals)
     if not candidates:
-        return 0, image.width
+        return []
     selected = max(candidates, key=lambda items: sum(right - left for left, right in items))
-    left = min(item[0] for item in selected)
-    right = max(item[1] for item in selected)
-    margin = max(3, round((right - left) / max(count, 1) * 0.05))
-    return max(0, round((left - margin) / scale)), min(image.width, round((right + margin) / scale))
+    return [(round(left / scale), round(right / scale)) for left, right in selected]
 
 
 def _timecard_header_top(image: Image.Image, card_no: int) -> int:
