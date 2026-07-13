@@ -15,6 +15,8 @@ OUTPUT_MIME_TYPE = "image/jpeg"
 MIN_LONG_EDGE = 2200
 MAX_LONG_EDGE = 2800
 MAX_UPSCALE_FACTOR = 2.0
+PDF_CARD_MIN_WIDTH = 900
+PDF_CARD_MAX_UPSCALE_FACTOR = 4.0
 DUAL_CARD_MIN_ASPECT_RATIO = 0.82
 PDF_MIME_TYPE = "application/pdf"
 PDF_LABEL_FONT_MIN = 13.0
@@ -297,8 +299,6 @@ def _prepare_oil_street_pdf_timecard_sources(
             continue
 
         for staff_index, staff_name_hint in enumerate(labels, start=1):
-            cards: list[tuple[int, Image.Image]] = []
-            crop_boxes: list[dict[str, Any]] = []
             for card_no, row_image in sorted(row_images.items()):
                 card, crop_box = _crop_timecard_from_row(
                     row_image,
@@ -306,51 +306,51 @@ def _prepare_oil_street_pdf_timecard_sources(
                     len(labels),
                     card_no,
                 )
-                cards.append((card_no, card))
-                crop_boxes.append({"card_no": card_no, **crop_box})
-            if not cards:
-                continue
-
-            paired_image = _combine_timecard_cards(cards)
-            part_filename = _pdf_staff_part_filename(filename, page_number, staff_index)
-            paired_bytes = _image_to_jpeg_bytes(paired_image)
-            processed, output_mime, preprocessing = prepare_ocr_image(
-                paired_bytes,
-                part_filename,
-                mime_type=OUTPUT_MIME_TYPE,
-                enabled=enabled,
-            )
-            preprocessing.update(
-                {
-                    "split_applied": True,
-                    "source_filename": filename,
-                    "source_part_filename": part_filename,
-                    "source_page": page_number,
-                    "source_staff_index": staff_index,
-                    "source_staff_name_hint": staff_name_hint,
-                    "source_card_nos": [card_no for card_no, _card in cards],
-                    "source_crop_boxes": crop_boxes,
-                }
-            )
-            sources.append(
-                PreparedOcrSource(
-                    file_bytes=processed,
-                    filename=part_filename,
-                    mime_type=output_mime,
-                    source_filename=filename,
-                    preprocessing=preprocessing,
-                    metadata={
-                        "source_type": "pdf_timecard_pair",
+                crop_size = {"width": card.width, "height": card.height}
+                card_scale_factor = 1.0
+                if enabled:
+                    card, card_scale_factor = _resize_pdf_timecard_for_ocr(card)
+                part_filename = _pdf_staff_part_filename(filename, page_number, staff_index, card_no)
+                card_bytes = _image_to_jpeg_bytes(card)
+                processed, output_mime, preprocessing = prepare_ocr_image(
+                    card_bytes,
+                    part_filename,
+                    mime_type=OUTPUT_MIME_TYPE,
+                    enabled=enabled,
+                )
+                preprocessing.update(
+                    {
+                        "split_applied": True,
+                        "source_filename": filename,
+                        "source_part_filename": part_filename,
                         "source_page": page_number,
                         "source_staff_index": staff_index,
                         "source_staff_name_hint": staff_name_hint,
-                        "source_card_nos": [card_no for card_no, _card in cards],
-                        "source_part_filename": part_filename,
-                        "source_part_label": f"page {page_number}, staff {staff_index}, cards 1-2",
-                        "source_crop_boxes": crop_boxes,
-                    },
+                        "source_card_no": card_no,
+                        "source_crop_box": crop_box,
+                        "source_crop_size": crop_size,
+                        "pdf_card_scale_factor": round(card_scale_factor, 3),
+                    }
                 )
-            )
+                sources.append(
+                    PreparedOcrSource(
+                        file_bytes=processed,
+                        filename=part_filename,
+                        mime_type=output_mime,
+                        source_filename=filename,
+                        preprocessing=preprocessing,
+                        metadata={
+                            "source_type": "pdf_timecard_card",
+                            "source_page": page_number,
+                            "source_staff_index": staff_index,
+                            "source_staff_name_hint": staff_name_hint,
+                            "source_card_no": card_no,
+                            "source_part_filename": part_filename,
+                            "source_part_label": f"page {page_number}, staff {staff_index}, card {card_no}",
+                            "source_crop_box": crop_box,
+                        },
+                    )
+                )
 
     if len(sources) < 2:
         return []
@@ -580,21 +580,21 @@ def _true_intervals(values: list[bool], *, min_length: int) -> list[tuple[int, i
     return intervals
 
 
-def _combine_timecard_cards(cards: list[tuple[int, Image.Image]]) -> Image.Image:
-    gap = 18
-    height = max(card.height for _card_no, card in cards)
-    width = sum(card.width for _card_no, card in cards) + gap * max(0, len(cards) - 1)
-    output = Image.new("RGB", (width, height), "white")
-    offset = 0
-    for _card_no, card in cards:
-        output.paste(card, (offset, 0))
-        offset += card.width + gap
-    return output
+def _resize_pdf_timecard_for_ocr(image: Image.Image) -> tuple[Image.Image, float]:
+    long_edge = max(image.size)
+    if image.width <= 0 or long_edge <= 0:
+        raise ValueError("PDF timecard crop has invalid dimensions")
+    scale = max(MIN_LONG_EDGE / long_edge, PDF_CARD_MIN_WIDTH / image.width, 1.0)
+    scale = min(scale, PDF_CARD_MAX_UPSCALE_FACTOR, MAX_LONG_EDGE / long_edge)
+    if scale <= 1.001:
+        return image, 1.0
+    size = (max(1, round(image.width * scale)), max(1, round(image.height * scale)))
+    return image.resize(size, Image.Resampling.LANCZOS), scale
 
 
-def _pdf_staff_part_filename(filename: str, page_number: int, staff_index: int) -> str:
+def _pdf_staff_part_filename(filename: str, page_number: int, staff_index: int, card_no: int) -> str:
     stem = Path(filename).stem or "timecard"
-    return f"{stem}__page_{page_number:02d}__staff_{staff_index:02d}.jpg"
+    return f"{stem}__page_{page_number:02d}__staff_{staff_index:02d}__card_{card_no}.jpg"
 
 
 def _normalize_mime_type(filename: str, mime_type: str | None) -> str | None:

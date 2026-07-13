@@ -820,7 +820,7 @@ def test_oil_street_dual_card_image_is_split_before_ocr(monkeypatch):
     ]
 
 
-def test_oil_street_all_staff_pdf_uses_roster_names_for_card_pairs(monkeypatch):
+def test_oil_street_all_staff_pdf_uses_roster_names_for_individual_cards(monkeypatch):
     sample = (
         Path(__file__).parents[1]
         / "doc"
@@ -889,14 +889,16 @@ def test_oil_street_all_staff_pdf_uses_roster_names_for_card_pairs(monkeypatch):
     payload = response.get_json()
 
     assert response.status_code == 200
-    assert payload["ocr"]["ocr_part_count"] == 25
-    assert len(calls) == 25
+    assert payload["ocr"]["ocr_part_count"] == 50
+    assert len(calls) == 50
     hints = [call[2]["source_staff_name_hint"] for call in calls]
     assert "Au Kin Wai Johnny" in hints
     assert "Lau Yuet To Alice" in hints
-    assert hints.count("Kan Lok Chi Gigi") == 2
-    assert all(call[2]["source_type"] == "pdf_timecard_pair" for call in calls)
+    assert hints.count("Kan Lok Chi Gigi") == 4
+    assert all(call[2]["source_type"] == "pdf_timecard_card" for call in calls)
+    assert [call[2]["source_card_no"] for call in calls[:4]] == [1, 2, 1, 2]
     assert all(call[2]["source_staff_name_hint"] in call[1] for call in calls)
+    assert all(f"Card {call[2]['source_card_no']}" in call[1] for call in calls)
 
 
 def test_compare_roster_success_returns_summary():

@@ -390,7 +390,7 @@ def _ocr_prepared_sources(
         )
 
     is_pdf_card_batch = len(sources) > 2 and all(
-        source.metadata.get("source_type") == "pdf_timecard_pair"
+        source.metadata.get("source_type") in {"pdf_timecard_pair", "pdf_timecard_card"}
         for source in sources
     )
     if not is_pdf_card_batch:
@@ -404,12 +404,22 @@ def _ocr_prompt_for_source(prompt: str | None, metadata: dict[str, Any]) -> str 
     staff_name_hint = str(metadata.get("source_staff_name_hint") or "").strip()
     if not staff_name_hint:
         return prompt
-    instruction = (
-        "Oil Street PDF card-pair instruction:\n"
-        f"- The two visible half-month cards belong to exactly this staff member: {staff_name_hint}.\n"
-        f"- Return the row-level name exactly as: {staff_name_hint}.\n"
-        "- Extract every worked day from both Card 1 and Card 2; do not summarize or omit sparse rows."
-    )
+    card_no = metadata.get("source_card_no")
+    if card_no:
+        instruction = (
+            "Oil Street PDF single-card instruction:\n"
+            f"- This image contains only Card {card_no} for exactly this staff member: {staff_name_hint}.\n"
+            f"- Return the row-level name exactly as: {staff_name_hint}.\n"
+            f"- Extract every worked day visible on Card {card_no}; do not summarize or omit sparse rows.\n"
+            "- Read each stamped time from its own horizontal date row."
+        )
+    else:
+        instruction = (
+            "Oil Street PDF card-pair instruction:\n"
+            f"- The two visible half-month cards belong to exactly this staff member: {staff_name_hint}.\n"
+            f"- Return the row-level name exactly as: {staff_name_hint}.\n"
+            "- Extract every worked day from both Card 1 and Card 2; do not summarize or omit sparse rows."
+        )
     return f"{prompt}\n\n{instruction}".strip() if prompt else instruction
 
 

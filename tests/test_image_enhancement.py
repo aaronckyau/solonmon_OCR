@@ -98,7 +98,7 @@ def test_prepare_oil_street_timecard_sources_keeps_single_vertical_card():
     assert sources[0].metadata["source_type"] == "single"
 
 
-def test_prepare_oil_street_all_staff_pdf_splits_one_source_per_staff():
+def test_prepare_oil_street_all_staff_pdf_splits_one_source_per_card():
     sample = (
         Path(__file__).parents[1]
         / "doc"
@@ -118,14 +118,48 @@ def test_prepare_oil_street_all_staff_pdf_splits_one_source_per_staff():
         enabled=False,
     )
 
-    assert len(sources) == 25
-    assert {source.metadata["source_type"] for source in sources} == {"pdf_timecard_pair"}
+    assert len(sources) == 50
+    assert {source.metadata["source_type"] for source in sources} == {"pdf_timecard_card"}
     assert [source.metadata["source_page"] for source in sources] == [
-        *([1] * 6),
-        *([2] * 6),
-        *([3] * 6),
-        *([4] * 5),
-        *([5] * 2),
+        *([1] * 12),
+        *([2] * 12),
+        *([3] * 12),
+        *([4] * 10),
+        *([5] * 4),
     ]
     assert sources[0].metadata["source_staff_name_hint"].replace(" ", "") == "AuKinWaiJohnny"
     assert sources[-1].metadata["source_staff_name_hint"].replace(" ", "") == "LauYuetToAlice"
+    assert [source.metadata["source_card_no"] for source in sources[:4]] == [1, 2, 1, 2]
+    assert sources[0].filename.endswith("__card_1.jpg")
+    assert sources[1].filename.endswith("__card_2.jpg")
+
+
+def test_prepare_oil_street_pdf_cards_are_large_enough_for_stamp_ocr():
+    sample = (
+        Path(__file__).parents[1]
+        / "doc"
+        / "Testing"
+        / "Testing"
+        / "Oil Street"
+        / "June 2026"
+        / "Oi! timecard_June 2026 (All Staff).pdf"
+    )
+    if not sample.exists():
+        pytest.skip("Oil Street all-staff PDF fixture is not available")
+
+    sources = prepare_oil_street_timecard_sources(
+        sample.read_bytes(),
+        sample.name,
+        mime_type="application/pdf",
+        enabled=True,
+    )
+    source = next(
+        item
+        for item in sources
+        if item.metadata["source_staff_name_hint"].replace(" ", "") == "LauKaYiuYoYo"
+        and item.metadata["source_card_no"] == 1
+    )
+
+    with Image.open(BytesIO(source.file_bytes)) as image:
+        assert image.width >= 800
+        assert image.height >= 2000
