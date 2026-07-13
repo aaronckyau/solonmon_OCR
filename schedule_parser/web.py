@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import calendar
+from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from datetime import datetime
+import json
 import os
 import re
 import traceback
@@ -82,6 +84,7 @@ def create_app() -> Flask:
             project_profile = _project_profile_from_request()
             prompt = _ocr_prompt_for_project(project_profile, request.form.get("prompt"))
             enhance_images = _coerce_bool(request.form.get("enhance_image"), default=True)
+            staff_names = _staff_names_from_request()
             for uploaded, safe_name in prepared_uploads:
                 raw_bytes = uploaded.read()
                 if not raw_bytes:
@@ -92,16 +95,14 @@ def create_app() -> Flask:
                     safe_name,
                     mime_type=uploaded.mimetype or None,
                     enhance_images=enhance_images,
+                    staff_names=staff_names,
                 )
-                for source in sources:
-                    result = ocr_logsheet_with_openrouter(
-                        source.file_bytes,
-                        source.filename,
-                        mime_type=source.mime_type or uploaded.mimetype or None,
-                        prompt=prompt,
-                        source_filename=source.source_filename,
-                        source_metadata=source.metadata,
-                    )
+                source_results = _ocr_prepared_sources(
+                    sources,
+                    prompt=prompt,
+                    fallback_mime_type=uploaded.mimetype or None,
+                )
+                for source, result in zip(sources, source_results):
                     result["preprocessing"] = source.preprocessing
                     result["source_metadata"] = {**(result.get("source_metadata") or {}), **source.metadata}
                     results.append(result)
@@ -234,6 +235,7 @@ def _prepared_ocr_sources(
     *,
     mime_type: str | None,
     enhance_images: bool,
+    staff_names: list[str] | None = None,
 ) -> list[PreparedOcrSource]:
     if project_profile == "oil_street":
         return prepare_oil_street_timecard_sources(
@@ -241,6 +243,7 @@ def _prepared_ocr_sources(
             filename,
             mime_type=mime_type,
             enabled=enhance_images,
+            staff_names=staff_names,
         )
     ocr_bytes, ocr_mime_type, preprocessing = prepare_ocr_image(
         raw_bytes,
@@ -258,6 +261,71 @@ def _prepared_ocr_sources(
             metadata={"source_type": "single", "source_part_count": 1},
         )
     ]
+
+
+def _staff_names_from_request() -> list[str]:
+    raw_value = request.form.get("staff_names")
+    if not raw_value:
+        return []
+    try:
+        values = json.loads(raw_value)
+    except (TypeError, json.JSONDecodeError):
+        return []
+    if not isinstance(values, list):
+        return []
+    names: list[str] = []
+    for value in values:
+        name = str(value or "").strip()
+        if name and name not in names:
+            names.append(name)
+    return names[:500]
+
+
+def _ocr_prepared_sources(
+    sources: list[PreparedOcrSource],
+    *,
+    prompt: str | None,
+    fallback_mime_type: str | None,
+) -> list[dict[str, Any]]:
+    def run(source: PreparedOcrSource) -> dict[str, Any]:
+        return ocr_logsheet_with_openrouter(
+            source.file_bytes,
+            source.filename,
+            mime_type=source.mime_type or fallback_mime_type,
+            prompt=_ocr_prompt_for_source(prompt, source.metadata),
+            source_filename=source.source_filename,
+            source_metadata=source.metadata,
+        )
+
+    is_pdf_card_batch = len(sources) > 2 and all(
+        source.metadata.get("source_type") == "pdf_timecard_pair"
+        for source in sources
+    )
+    if not is_pdf_card_batch:
+        return [run(source) for source in sources]
+    max_workers = min(len(sources), _positive_env_int("OPENROUTER_PDF_CARD_PARALLELISM", 3))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        return list(executor.map(run, sources))
+
+
+def _ocr_prompt_for_source(prompt: str | None, metadata: dict[str, Any]) -> str | None:
+    staff_name_hint = str(metadata.get("source_staff_name_hint") or "").strip()
+    if not staff_name_hint:
+        return prompt
+    instruction = (
+        "Oil Street PDF card-pair instruction:\n"
+        f"- The two visible half-month cards belong to exactly this staff member: {staff_name_hint}.\n"
+        f"- Return the row-level name exactly as: {staff_name_hint}.\n"
+        "- Extract every worked day from both Card 1 and Card 2; do not summarize or omit sparse rows."
+    )
+    return f"{prompt}\n\n{instruction}".strip() if prompt else instruction
+
+
+def _positive_env_int(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.getenv(name, str(default))))
+    except (TypeError, ValueError):
+        return default
 
 
 def _parse_schedule_for_profile(project_profile: str, raw_bytes: bytes, filename: str):

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from io import BytesIO
+import json
 from pathlib import Path
 
 from PIL import Image
+import pytest
 
 from schedule_parser.web import create_app
 
@@ -712,6 +714,85 @@ def test_oil_street_dual_card_image_is_split_before_ocr(monkeypatch):
         "Poon_Wai_Ching_Crystal__card_1.jpg",
         "Poon_Wai_Ching_Crystal__card_2.jpg",
     ]
+
+
+def test_oil_street_all_staff_pdf_uses_roster_names_for_card_pairs(monkeypatch):
+    sample = (
+        Path(__file__).parents[1]
+        / "doc"
+        / "Testing"
+        / "Testing"
+        / "Oil Street"
+        / "June 2026"
+        / "Oi! timecard_June 2026 (All Staff).pdf"
+    )
+    if not sample.exists():
+        pytest.skip("Oil Street all-staff PDF fixture is not available")
+    staff_names = [
+        "Au Kin Wai Johnny",
+        "Chui Chung Yan Nicole",
+        "Ching Yeuk Ling Alice",
+        "Ko Wai Yin",
+        "Kwong Wai Thomas",
+        "Lam Wai Ching Jade",
+        "Lau Ka Yiu Yo Yo",
+        "Law Suet Shan",
+        "Leung Ah Woon Alvina",
+        "Ma Pak Yin Momo",
+        "Lo Siu Ho Heaven",
+        "Poon Wai Ching Crystal",
+        "Ma Pui Ying Joy",
+        "Pan Hoi Yin William",
+        "Tse Bing Ying Samantha",
+        "Woo Hiu Ki Yuki",
+        "Kan Lok Chi Gigi",
+        "Wong Ching Yuk Selene",
+        "Wong Pak Him Samuel",
+        "Lam Lok Yi Sum",
+        "Mok Ka Man Idy",
+        "Leung Yuen Yi Alyria",
+        "Wong Pui Yin Olivia",
+        "Lau Yuet To Alice",
+    ]
+    calls = []
+
+    def fake_ocr(file_bytes, filename, *, mime_type=None, prompt=None, source_filename=None, source_metadata=None):
+        calls.append((filename, prompt, source_metadata))
+        return {
+            "source_filename": source_filename,
+            "source_part_filename": filename,
+            "source_metadata": source_metadata,
+            "configured_model": "fake-model",
+            "response_model": "fake-model",
+            "finish_reason": "stop",
+            "structured": {},
+            "daily_rows": [],
+            "usage": {},
+            "annotations": [],
+        }
+
+    monkeypatch.setattr("schedule_parser.web.ocr_logsheet_with_openrouter", fake_ocr)
+    response = client().post(
+        "/api/ocr-logsheet",
+        data={
+            "logsheet": (BytesIO(sample.read_bytes()), sample.name),
+            "project_profile": "oil_street",
+            "staff_names": json.dumps(staff_names),
+            "enhance_image": "0",
+        },
+        content_type="multipart/form-data",
+    )
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["ocr"]["ocr_part_count"] == 25
+    assert len(calls) == 25
+    hints = [call[2]["source_staff_name_hint"] for call in calls]
+    assert "Au Kin Wai Johnny" in hints
+    assert "Lau Yuet To Alice" in hints
+    assert hints.count("Kan Lok Chi Gigi") == 2
+    assert all(call[2]["source_type"] == "pdf_timecard_pair" for call in calls)
+    assert all(call[2]["source_staff_name_hint"] in call[1] for call in calls)
 
 
 def test_compare_roster_success_returns_summary():

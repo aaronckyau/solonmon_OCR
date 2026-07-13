@@ -829,6 +829,12 @@ async function ocrSingleFile(file, extraPrompt) {
   const form = new FormData();
   form.append("logsheet", file);
   form.append("project_profile", state.projectProfile);
+  const staffNames = (state.schedule?.staff || [])
+    .map((staff) => String(staff?.name || staff?.staff_name || "").trim())
+    .filter(Boolean);
+  if (staffNames.length) {
+    form.append("staff_names", JSON.stringify(staffNames));
+  }
   if (extraPrompt) {
     form.append("prompt", extraPrompt);
   }

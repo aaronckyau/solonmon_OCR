@@ -533,8 +533,17 @@ def _apply_source_metadata_to_rows(
     if not metadata:
         return rows
     for row in rows:
+        staff_name_hint = _string_or_none(metadata.get("source_staff_name_hint"))
+        if staff_name_hint:
+            recognized_name = _string_or_none(row.get("name"))
+            if recognized_name and recognized_name != staff_name_hint:
+                row["ocr_name"] = recognized_name
+            row["name"] = staff_name_hint
+            row["source_staff_name_hint"] = staff_name_hint
         if "source_page" in metadata:
             row["source_page"] = metadata["source_page"]
+        if "source_staff_index" in metadata:
+            row["source_staff_index"] = metadata["source_staff_index"]
         if "source_card_no" in metadata:
             row["source_card_no"] = str(metadata["source_card_no"])
         if "source_part_filename" in metadata:
@@ -936,7 +945,15 @@ def _append_source_part(target: list[dict[str, Any]], part: dict[str, Any]) -> N
 
 def _source_part_from_row(row: dict[str, Any]) -> dict[str, Any]:
     part: dict[str, Any] = {}
-    for key in ("source_page", "source_card_no", "source_part_filename", "source_part_label", "source_crop_box"):
+    for key in (
+        "source_page",
+        "source_staff_index",
+        "source_staff_name_hint",
+        "source_card_no",
+        "source_part_filename",
+        "source_part_label",
+        "source_crop_box",
+    ):
         value = row.get(key)
         if value not in (None, ""):
             part[key] = value
@@ -959,6 +976,8 @@ def _infer_staff_name_from_filename(source_filename: str) -> str | None:
         r"\bregister\s+for\s+exhibition\s+helpers\b",
         r"\bgallery\s+helper\b",
         r"\btimesheet\b",
+        r"\ball\s+staff\b",
+        r"\boi!?\s+timecard\b",
         r"\b\d{1,2}\s+and\s+\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)\b",
         r"\b\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)\b",
     )

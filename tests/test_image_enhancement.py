@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from io import BytesIO
+from pathlib import Path
 
 from PIL import Image
+import pytest
 
 from schedule_parser.image_enhancement import OUTPUT_MIME_TYPE, prepare_ocr_image, prepare_oil_street_timecard_sources
 
@@ -94,3 +96,36 @@ def test_prepare_oil_street_timecard_sources_keeps_single_vertical_card():
     assert len(sources) == 1
     assert sources[0].filename == "Wong Hau Sin Cynthia 2.png"
     assert sources[0].metadata["source_type"] == "single"
+
+
+def test_prepare_oil_street_all_staff_pdf_splits_one_source_per_staff():
+    sample = (
+        Path(__file__).parents[1]
+        / "doc"
+        / "Testing"
+        / "Testing"
+        / "Oil Street"
+        / "June 2026"
+        / "Oi! timecard_June 2026 (All Staff).pdf"
+    )
+    if not sample.exists():
+        pytest.skip("Oil Street all-staff PDF fixture is not available")
+
+    sources = prepare_oil_street_timecard_sources(
+        sample.read_bytes(),
+        sample.name,
+        mime_type="application/pdf",
+        enabled=False,
+    )
+
+    assert len(sources) == 25
+    assert {source.metadata["source_type"] for source in sources} == {"pdf_timecard_pair"}
+    assert [source.metadata["source_page"] for source in sources] == [
+        *([1] * 6),
+        *([2] * 6),
+        *([3] * 6),
+        *([4] * 5),
+        *([5] * 2),
+    ]
+    assert sources[0].metadata["source_staff_name_hint"].replace(" ", "") == "AuKinWaiJohnny"
+    assert sources[-1].metadata["source_staff_name_hint"].replace(" ", "") == "LauYuetToAlice"

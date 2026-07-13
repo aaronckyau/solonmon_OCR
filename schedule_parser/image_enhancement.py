@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from io import BytesIO
 import mimetypes
 from pathlib import Path
+import re
 from typing import Any
 
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps, UnidentifiedImageError
@@ -15,6 +16,9 @@ MIN_LONG_EDGE = 2200
 MAX_LONG_EDGE = 2800
 MAX_UPSCALE_FACTOR = 2.0
 DUAL_CARD_MIN_ASPECT_RATIO = 0.82
+PDF_MIME_TYPE = "application/pdf"
+PDF_LABEL_FONT_MIN = 13.0
+PDF_LABEL_FONT_MAX = 19.0
 
 
 @dataclass(slots=True)
@@ -75,8 +79,18 @@ def prepare_oil_street_timecard_sources(
     *,
     mime_type: str | None = None,
     enabled: bool = True,
+    staff_names: list[str] | None = None,
 ) -> list[PreparedOcrSource]:
     normalized_mime = _normalize_mime_type(filename, mime_type)
+    if normalized_mime == PDF_MIME_TYPE:
+        pdf_sources = _prepare_oil_street_pdf_timecard_sources(
+            file_bytes,
+            filename,
+            enabled=enabled,
+            staff_names=staff_names or [],
+        )
+        if pdf_sources:
+            return pdf_sources
     if normalized_mime not in SUPPORTED_IMAGE_MIME_TYPES:
         processed, output_mime, preprocessing = prepare_ocr_image(
             file_bytes,
@@ -92,7 +106,7 @@ def prepare_oil_street_timecard_sources(
                 source_filename=filename,
                 preprocessing=preprocessing,
                 metadata={
-                    "source_type": "pdf" if normalized_mime == "application/pdf" else "single",
+                    "source_type": "pdf" if normalized_mime == PDF_MIME_TYPE else "single",
                     "source_part_count": 1,
                 },
             )
@@ -257,6 +271,330 @@ def _image_to_jpeg_bytes(image: Image.Image) -> bytes:
 def _source_part_filename(filename: str, card_no: int) -> str:
     path = Path(filename)
     return f"{path.stem}__card_{card_no}.jpg"
+
+
+def _prepare_oil_street_pdf_timecard_sources(
+    file_bytes: bytes,
+    filename: str,
+    *,
+    enabled: bool,
+    staff_names: list[str],
+) -> list[PreparedOcrSource]:
+    try:
+        from pypdf import PdfReader
+
+        reader = PdfReader(BytesIO(file_bytes))
+    except Exception:
+        return []
+
+    sources: list[PreparedOcrSource] = []
+    for page_number, page in enumerate(reader.pages, start=1):
+        labels = _pdf_page_staff_labels(page, staff_names)
+        if len(labels) < 2:
+            continue
+        row_images = _pdf_page_timecard_row_images(page)
+        if not row_images:
+            continue
+
+        for staff_index, staff_name_hint in enumerate(labels, start=1):
+            cards: list[tuple[int, Image.Image]] = []
+            crop_boxes: list[dict[str, Any]] = []
+            for card_no, row_image in sorted(row_images.items()):
+                card, crop_box = _crop_timecard_from_row(
+                    row_image,
+                    staff_index - 1,
+                    len(labels),
+                    card_no,
+                )
+                cards.append((card_no, card))
+                crop_boxes.append({"card_no": card_no, **crop_box})
+            if not cards:
+                continue
+
+            paired_image = _combine_timecard_cards(cards)
+            part_filename = _pdf_staff_part_filename(filename, page_number, staff_index)
+            paired_bytes = _image_to_jpeg_bytes(paired_image)
+            processed, output_mime, preprocessing = prepare_ocr_image(
+                paired_bytes,
+                part_filename,
+                mime_type=OUTPUT_MIME_TYPE,
+                enabled=enabled,
+            )
+            preprocessing.update(
+                {
+                    "split_applied": True,
+                    "source_filename": filename,
+                    "source_part_filename": part_filename,
+                    "source_page": page_number,
+                    "source_staff_index": staff_index,
+                    "source_staff_name_hint": staff_name_hint,
+                    "source_card_nos": [card_no for card_no, _card in cards],
+                    "source_crop_boxes": crop_boxes,
+                }
+            )
+            sources.append(
+                PreparedOcrSource(
+                    file_bytes=processed,
+                    filename=part_filename,
+                    mime_type=output_mime,
+                    source_filename=filename,
+                    preprocessing=preprocessing,
+                    metadata={
+                        "source_type": "pdf_timecard_pair",
+                        "source_page": page_number,
+                        "source_staff_index": staff_index,
+                        "source_staff_name_hint": staff_name_hint,
+                        "source_card_nos": [card_no for card_no, _card in cards],
+                        "source_part_filename": part_filename,
+                        "source_part_label": f"page {page_number}, staff {staff_index}, cards 1-2",
+                        "source_crop_boxes": crop_boxes,
+                    },
+                )
+            )
+
+    if len(sources) < 2:
+        return []
+    for source in sources:
+        source.metadata["source_part_count"] = len(sources)
+        source.preprocessing["source_part_count"] = len(sources)
+    return sources
+
+
+def _pdf_page_staff_labels(page: Any, staff_names: list[str]) -> list[str]:
+    fragments: list[dict[str, Any]] = []
+
+    def collect(text, current_matrix, text_matrix, _font, font_size) -> None:
+        value = " ".join(str(text or "").split())
+        if not value or not (PDF_LABEL_FONT_MIN <= float(font_size or 0) <= PDF_LABEL_FONT_MAX):
+            return
+        scale_x = abs(float(current_matrix[0])) or 1.0
+        scale_y = abs(float(current_matrix[3])) or 1.0
+        fragments.append(
+            {
+                "text": value,
+                "x": float(current_matrix[4]) / scale_x,
+                "y": float(current_matrix[5]) / scale_y,
+                "line_y": float(text_matrix[5]),
+            }
+        )
+
+    try:
+        page.extract_text(visitor_text=collect)
+    except Exception:
+        return []
+    if not fragments:
+        return []
+
+    bands: list[dict[str, Any]] = []
+    for fragment in sorted(fragments, key=lambda item: item["y"]):
+        band = next((item for item in bands if abs(item["y"] - fragment["y"]) <= 45), None)
+        if band is None:
+            band = {"y": fragment["y"], "fragments": []}
+            bands.append(band)
+        band["fragments"].append(fragment)
+
+    candidates: list[list[str]] = []
+    for band in bands:
+        groups: list[dict[str, Any]] = []
+        for fragment in sorted(band["fragments"], key=lambda item: (item["x"], item["line_y"])):
+            group = next((item for item in groups if abs(item["x"] - fragment["x"]) <= 18), None)
+            if group is None:
+                group = {"x": fragment["x"], "fragments": []}
+                groups.append(group)
+            group["fragments"].append(fragment)
+        labels = [
+            " ".join(item["text"] for item in sorted(group["fragments"], key=lambda item: item["line_y"]))
+            for group in sorted(groups, key=lambda item: item["x"])
+        ]
+        candidates.append([_match_staff_label(label, staff_names) for label in labels])
+    return max(candidates, key=len, default=[])
+
+
+def _match_staff_label(label: str, staff_names: list[str]) -> str:
+    normalized_label = _normalized_name(label)
+    for staff_name in staff_names:
+        if _normalized_name(staff_name) == normalized_label:
+            return staff_name
+    return label
+
+
+def _normalized_name(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
+
+
+def _pdf_page_timecard_row_images(page: Any) -> dict[int, Image.Image]:
+    candidates: list[tuple[Image.Image, int, int]] = []
+    try:
+        page_images = list(page.images)
+    except Exception:
+        return {}
+    for item in page_images:
+        try:
+            image = Image.open(BytesIO(item.data))
+            image = _to_rgb_on_white(image)
+        except (OSError, UnidentifiedImageError, ValueError):
+            continue
+        if image.width < image.height:
+            image = image.rotate(90, expand=True)
+        if image.width < 500 or image.height < 400:
+            continue
+        blue_score, orange_score = _timecard_color_scores(image)
+        candidates.append((image, blue_score, orange_score))
+    if not candidates:
+        return {}
+    if len(candidates) == 1:
+        image, blue_score, orange_score = candidates[0]
+        return {1 if blue_score >= orange_score else 2: image}
+
+    blue_index = max(range(len(candidates)), key=lambda index: candidates[index][1] - candidates[index][2])
+    orange_index = min(range(len(candidates)), key=lambda index: candidates[index][1] - candidates[index][2])
+    if blue_index == orange_index:
+        return {}
+    return {1: candidates[blue_index][0], 2: candidates[orange_index][0]}
+
+
+def _timecard_color_scores(image: Image.Image) -> tuple[int, int]:
+    sample, _scale = _resize_for_detection(image)
+    pixels = sample.load()
+    cutoff = max(1, round(sample.height * 0.55))
+    blue_score = 0
+    orange_score = 0
+    for y in range(cutoff):
+        blue_count = 0
+        orange_count = 0
+        for x in range(sample.width):
+            red, green, blue = pixels[x, y]
+            blue_count += int(_is_blue_header_pixel(red, green, blue))
+            orange_count += int(_is_orange_header_pixel(red, green, blue))
+        blue_score = max(blue_score, blue_count)
+        orange_score = max(orange_score, orange_count)
+    return blue_score, orange_score
+
+
+def _crop_timecard_from_row(
+    image: Image.Image,
+    index: int,
+    count: int,
+    card_no: int,
+) -> tuple[Image.Image, dict[str, int]]:
+    left, right = _timecard_row_horizontal_bounds(image, count, card_no)
+    pitch = (right - left) / max(count, 1)
+    overlap = max(6, round(pitch * 0.045))
+    crop_left = max(0, round(left + index * pitch) - overlap)
+    crop_right = min(image.width, round(left + (index + 1) * pitch) + overlap)
+    header_top = _timecard_header_top(image, card_no)
+    crop_top = max(0, header_top - max(8, round(pitch * 0.08)))
+    crop_bottom = min(image.height, crop_top + round((crop_right - crop_left) * 2.55))
+    if crop_bottom - crop_top < image.height * 0.45:
+        crop_bottom = image.height
+    crop_box = (crop_left, crop_top, crop_right, crop_bottom)
+    return image.crop(crop_box), {
+        "left": crop_left,
+        "top": crop_top,
+        "right": crop_right,
+        "bottom": crop_bottom,
+    }
+
+
+def _timecard_row_horizontal_bounds(image: Image.Image, count: int, card_no: int) -> tuple[int, int]:
+    if count > 3:
+        return 0, image.width
+    sample, scale = _resize_for_detection(image)
+    pixels = sample.load()
+    cutoff = max(1, round(sample.height * 0.55))
+    min_length = max(5, round(sample.width / max(count * 6, 1)))
+    candidates: list[list[tuple[int, int]]] = []
+    for center_y in range(4, max(4, cutoff - 4)):
+        band_top = center_y - 4
+        band_bottom = center_y + 5
+        required = max(1, round((band_bottom - band_top) * 0.2))
+        active = [
+            sum(
+                1
+                for y in range(band_top, band_bottom)
+                if _is_card_header_pixel(pixels[x, y], card_no)
+            ) >= required
+            for x in range(sample.width)
+        ]
+        intervals = _true_intervals(active, min_length=min_length)
+        if len(intervals) == count:
+            candidates.append(intervals)
+    if not candidates:
+        return 0, image.width
+    selected = max(candidates, key=lambda items: sum(right - left for left, right in items))
+    left = min(item[0] for item in selected)
+    right = max(item[1] for item in selected)
+    margin = max(3, round((right - left) / max(count, 1) * 0.05))
+    return max(0, round((left - margin) / scale)), min(image.width, round((right + margin) / scale))
+
+
+def _timecard_header_top(image: Image.Image, card_no: int) -> int:
+    sample, scale = _resize_for_detection(image)
+    pixels = sample.load()
+    cutoff = max(1, round(sample.height * 0.55))
+    counts = [
+        sum(1 for x in range(sample.width) if _is_card_header_pixel(pixels[x, y], card_no))
+        for y in range(cutoff)
+    ]
+    peak = max(counts, default=0)
+    threshold = max(round(sample.width * 0.18), round(peak * 0.52))
+    candidates = [y for y, value in enumerate(counts) if value >= threshold]
+    if not candidates:
+        return 0
+    return max(0, round(candidates[0] / scale))
+
+
+def _resize_for_detection(image: Image.Image) -> tuple[Image.Image, float]:
+    if image.width <= 760:
+        return image, 1.0
+    scale = 760 / image.width
+    size = (760, max(1, round(image.height * scale)))
+    return image.resize(size, Image.Resampling.BILINEAR), scale
+
+
+def _is_card_header_pixel(pixel: tuple[int, int, int], card_no: int) -> bool:
+    red, green, blue = pixel
+    if card_no == 1:
+        return _is_blue_header_pixel(red, green, blue)
+    return _is_orange_header_pixel(red, green, blue)
+
+
+def _is_blue_header_pixel(red: int, green: int, blue: int) -> bool:
+    return blue - red > 18 and blue - green > 3 and blue > 70
+
+
+def _is_orange_header_pixel(red: int, green: int, blue: int) -> bool:
+    return red - blue > 30 and red - green > 5 and red > 120 and green > 50
+
+
+def _true_intervals(values: list[bool], *, min_length: int) -> list[tuple[int, int]]:
+    intervals: list[tuple[int, int]] = []
+    start: int | None = None
+    for index, value in enumerate([*values, False]):
+        if value and start is None:
+            start = index
+        elif not value and start is not None:
+            if index - start >= min_length:
+                intervals.append((start, index))
+            start = None
+    return intervals
+
+
+def _combine_timecard_cards(cards: list[tuple[int, Image.Image]]) -> Image.Image:
+    gap = 18
+    height = max(card.height for _card_no, card in cards)
+    width = sum(card.width for _card_no, card in cards) + gap * max(0, len(cards) - 1)
+    output = Image.new("RGB", (width, height), "white")
+    offset = 0
+    for _card_no, card in cards:
+        output.paste(card, (offset, 0))
+        offset += card.width + gap
+    return output
+
+
+def _pdf_staff_part_filename(filename: str, page_number: int, staff_index: int) -> str:
+    stem = Path(filename).stem or "timecard"
+    return f"{stem}__page_{page_number:02d}__staff_{staff_index:02d}.jpg"
 
 
 def _normalize_mime_type(filename: str, mime_type: str | None) -> str | None:

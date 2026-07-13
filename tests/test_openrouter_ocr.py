@@ -257,6 +257,56 @@ def test_ocr_client_attaches_source_metadata_to_rows(monkeypatch):
     ]
 
 
+def test_pdf_staff_hint_overrides_generic_all_staff_filename(monkeypatch):
+    def fake_post(payload, *, api_key):
+        return {
+            "model": "fake-model",
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "document_type": "logsheet",
+                                "month_year": "June 2026",
+                                "daily_rows": [
+                                    {
+                                        "name": "Johnny",
+                                        "date": "8",
+                                        "morning_in": "08:25",
+                                        "afternoon_out": "18:30",
+                                    }
+                                ],
+                            }
+                        )
+                    },
+                }
+            ],
+            "usage": {"total_tokens": 10},
+        }
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setattr(openrouter_ocr, "_post_openrouter", fake_post)
+
+    result = openrouter_ocr.ocr_logsheet_with_openrouter(
+        b"fake image",
+        "Oi_timecard_June_2026_All_Staff__page_01__staff_01.jpg",
+        mime_type="image/jpeg",
+        source_filename="Oi_timecard_June_2026_All_Staff.pdf",
+        source_metadata={
+            "source_type": "pdf_timecard_pair",
+            "source_page": 1,
+            "source_staff_index": 1,
+            "source_staff_name_hint": "Au Kin Wai Johnny",
+        },
+    )
+
+    row = result["daily_rows"][0]
+    assert row["name"] == "Au Kin Wai Johnny"
+    assert row["ocr_name"] == "Johnny"
+    assert row["date"] == "2026-06-08"
+
+
 def test_merge_preserves_source_parts_from_multiple_cards():
     rows = openrouter_ocr.merge_logsheet_daily_rows(
         [
