@@ -73,6 +73,39 @@ def test_compares_partial_ocr_name_to_schedule_staff_and_infers_day_only_date():
     assert missing["status"] == "Missing Logsheet"
 
 
+def test_preserves_generated_card_preview_metadata_in_comparison_row():
+    preview_path = "/api/ocr-preview/0123456789abcdef0123456789abcdef"
+    result = compare_schedule_to_ocr(
+        sample_schedule(),
+        [
+            {
+                "name": "Cheng Nuo Isla",
+                "date": "2025-08-20",
+                "in": "09:41",
+                "out": "20:15",
+                "source_filename": "Oi! timecard_June 2026 (All Staff).pdf",
+                "source_part_filename": "Cheng_Nuo_Isla__page_1_card_1.jpg",
+                "source_part_filenames": ["Cheng_Nuo_Isla__page_1_card_1.jpg"],
+                "source_preview_path": preview_path,
+                "source_preview_paths": [preview_path],
+                "source_parts": [
+                    {
+                        "source_part_filename": "Cheng_Nuo_Isla__page_1_card_1.jpg",
+                        "source_preview_path": preview_path,
+                    }
+                ],
+            }
+        ],
+    )
+
+    matched = next(row for row in result["rows"] if row["date"] == "2025-08-20")
+    assert matched["source_part_filename"] == "Cheng_Nuo_Isla__page_1_card_1.jpg"
+    assert matched["source_part_filenames"] == ["Cheng_Nuo_Isla__page_1_card_1.jpg"]
+    assert matched["source_preview_path"] == preview_path
+    assert matched["source_preview_paths"] == [preview_path]
+    assert matched["source_parts"][0]["source_preview_path"] == preview_path
+
+
 def test_adds_unscheduled_punch_for_matched_staff_without_roster_shift():
     result = compare_schedule_to_ocr(
         sample_schedule(),

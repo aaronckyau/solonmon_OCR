@@ -10,7 +10,7 @@ import re
 import traceback
 from typing import Any
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, send_file
 from werkzeug.exceptions import RequestEntityTooLarge
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.utils import secure_filename
@@ -23,6 +23,12 @@ from .openrouter_ocr import (
     OpenRouterOCRConfigError,
     merge_logsheet_daily_rows,
     ocr_logsheet_with_openrouter,
+)
+from .ocr_preview_store import (
+    load_stored_ocr_preview,
+    preview_data_path,
+    read_stored_ocr_preview_bytes,
+    store_prepared_ocr_source,
 )
 from .roster_compare import (
     compare_schedule_to_ocr,
@@ -63,22 +69,93 @@ def create_app() -> Flask:
     def parse_schedule_json():
         return _parse_upload(raw_only=True)
 
+    @app.post("/api/prepare-logsheet")
+    def prepare_logsheet():
+        try:
+            prepared_uploads = _validated_ocr_uploads()
+            project_profile = _project_profile_from_request()
+            enhance_images = _coerce_bool(request.form.get("enhance_image"), default=True)
+            staff_names = _staff_names_from_request()
+            parts = []
+            for uploaded, safe_name in prepared_uploads:
+                raw_bytes = uploaded.read()
+                if not raw_bytes:
+                    raise ValueError(f"{safe_name} 是空白檔案。")
+                sources = _prepared_ocr_sources(
+                    project_profile,
+                    raw_bytes,
+                    safe_name,
+                    mime_type=uploaded.mimetype or None,
+                    enhance_images=enhance_images,
+                    staff_names=staff_names,
+                )
+                parts.extend(store_prepared_ocr_source(source).to_public_dict() for source in sources)
+            return jsonify({
+                "ok": True,
+                "prepared": {
+                    "source_count": len(prepared_uploads),
+                    "part_count": len(parts),
+                    "parts": parts,
+                },
+            })
+        except ValueError as exc:
+            return _error_response(str(exc), 400)
+        except Exception as exc:  # pragma: no cover - exercised only for unexpected failures
+            details = traceback.format_exc() if app.config["SCHEDULE_PARSER_DEBUG"] else None
+            return _error_response(str(exc) or "準備打卡紙預覽失敗。", 500, details)
+
+    @app.post("/api/ocr-logsheet-part/<preview_id>")
+    def ocr_logsheet_part(preview_id: str):
+        stored = load_stored_ocr_preview(preview_id)
+        file_bytes = read_stored_ocr_preview_bytes(preview_id)
+        if stored is None or file_bytes is None:
+            return _error_response("打卡紙預覽已過期，請重新上傳。", 404)
+        try:
+            project_profile = _project_profile_from_request()
+            prompt = _ocr_prompt_for_project(project_profile, request.form.get("prompt"))
+            result = ocr_logsheet_with_openrouter(
+                file_bytes,
+                stored.filename,
+                mime_type=stored.mime_type,
+                prompt=_ocr_prompt_for_source(prompt, stored.metadata),
+                source_filename=stored.source_filename,
+                source_metadata=stored.metadata,
+            )
+            result["preprocessing"] = stored.preprocessing
+            result["source_metadata"] = {**(result.get("source_metadata") or {}), **stored.metadata}
+            return jsonify({
+                "ok": True,
+                "ocr": _combined_ocr_result([result], result.get("daily_rows") or []),
+            })
+        except OpenRouterOCRConfigError as exc:
+            return _error_response(str(exc), 503)
+        except OpenRouterOCRAPIError as exc:
+            return _error_response(str(exc), 502)
+        except ValueError as exc:
+            return _error_response(str(exc), 400)
+        except Exception as exc:  # pragma: no cover - exercised only for unexpected failures
+            details = traceback.format_exc() if app.config["SCHEDULE_PARSER_DEBUG"] else None
+            return _error_response(str(exc) or "打卡紙 OCR 失敗。", 500, details)
+
+    @app.get("/api/ocr-preview/<preview_id>")
+    def ocr_preview(preview_id: str):
+        stored = load_stored_ocr_preview(preview_id)
+        path = preview_data_path(preview_id)
+        if stored is None or path is None:
+            return _error_response("打卡紙預覽已過期，請重新上傳。", 404)
+        return send_file(
+            path,
+            mimetype=stored.mime_type or "application/octet-stream",
+            download_name=stored.filename,
+            as_attachment=False,
+            conditional=True,
+            max_age=3600,
+        )
+
     @app.post("/api/ocr-logsheet")
     def ocr_logsheet():
-        uploads = [item for item in request.files.getlist("logsheet") if item and item.filename]
-        if not uploads:
-            return _error_response("請上傳 logsheet 圖片或 PDF。", 400)
-
-        prepared_uploads = []
-        for uploaded in uploads:
-            safe_name = secure_filename(uploaded.filename)
-            if not safe_name:
-                return _error_response("檔案名稱無效。", 400)
-            if not _allowed_ocr_filename(safe_name):
-                return _error_response("只支援 .jpg、.jpeg、.png、.webp 或 .pdf logsheet。", 400)
-            prepared_uploads.append((uploaded, safe_name))
-
         try:
+            prepared_uploads = _validated_ocr_uploads()
             results = []
             daily_rows = []
             project_profile = _project_profile_from_request()
@@ -205,6 +282,21 @@ def _allowed_filename(filename: str) -> bool:
 def _allowed_ocr_filename(filename: str) -> bool:
     lower = filename.lower()
     return any(lower.endswith(ext) for ext in OCR_ALLOWED_EXTENSIONS)
+
+
+def _validated_ocr_uploads():
+    uploads = [item for item in request.files.getlist("logsheet") if item and item.filename]
+    if not uploads:
+        raise ValueError("請上傳 logsheet 圖片或 PDF。")
+    prepared_uploads = []
+    for uploaded in uploads:
+        safe_name = secure_filename(uploaded.filename)
+        if not safe_name:
+            raise ValueError("檔案名稱無效。")
+        if not _allowed_ocr_filename(safe_name):
+            raise ValueError("只支援 .jpg、.jpeg、.png、.webp 或 .pdf logsheet。")
+        prepared_uploads.append((uploaded, safe_name))
+    return prepared_uploads
 
 
 def _asset_version(static_folder: str | None) -> str:

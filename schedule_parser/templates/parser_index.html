@@ -237,6 +237,42 @@
           <progress id="ocrProgressBar" value="0" max="1"></progress>
           <div id="ocrProgressList" class="ocr-progress-list"></div>
         </div>
+        <section id="oilCardReviewPanel" class="oil-card-review" hidden>
+          <div class="oil-card-toolbar">
+            <div>
+              <p class="eyebrow">Oil Street timecards</p>
+              <h3>已分類打卡紙</h3>
+            </div>
+            <div id="oilCardSummary" class="oil-card-summary">0 張</div>
+          </div>
+          <div class="oil-card-workspace">
+            <aside class="oil-card-files" aria-label="已分類員工打卡紙">
+              <div class="oil-card-files-head">
+                <strong>員工</strong>
+                <small>完成一張即顯示結果</small>
+              </div>
+              <div id="oilCardList" class="oil-card-list"></div>
+            </aside>
+            <section class="oil-card-preview">
+              <div class="oil-card-preview-head">
+                <div>
+                  <strong id="oilCardPreviewTitle">未選擇</strong>
+                  <small id="oilCardPreviewMeta">分類後選擇一位員工</small>
+                </div>
+                <div class="oil-card-preview-tools" aria-label="打卡紙圖片縮放">
+                  <button id="oilCardZoomOutButton" type="button" class="secondary" title="縮小" aria-label="縮小">-</button>
+                  <span id="oilCardZoomValue">100%</span>
+                  <button id="oilCardZoomInButton" type="button" class="secondary" title="放大" aria-label="放大">+</button>
+                  <button id="oilCardResetButton" type="button" class="secondary" title="重設縮放" aria-label="重設縮放">100%</button>
+                </div>
+              </div>
+              <div id="oilCardPreviewStage" class="oil-card-preview-stage">
+                <img id="oilCardPreviewImage" alt="已分類員工打卡紙" hidden>
+                <div id="oilCardPreviewEmpty" class="logsheet-empty">上傳並分類 PDF 後會在這裡預覽。</div>
+              </div>
+            </section>
+          </div>
+        </section>
         <section id="dngSheetReviewPanel" class="dng-sheet-review" hidden>
           <div class="dng-sheet-toolbar">
             <div>

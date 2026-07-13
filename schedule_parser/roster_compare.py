@@ -242,6 +242,11 @@ def _normalize_actual_row(row: dict[str, Any], schedule_dates: set[str]) -> dict
         "actual_out": actual_out,
         "source_filename": _clean_text(row.get("source_filename")),
         "source_filenames": [str(item) for item in row.get("source_filenames") or [] if item],
+        "source_part_filename": _clean_text(row.get("source_part_filename")),
+        "source_part_filenames": [str(item) for item in row.get("source_part_filenames") or [] if item],
+        "source_preview_path": _clean_text(row.get("source_preview_path")),
+        "source_preview_paths": [str(item) for item in row.get("source_preview_paths") or [] if item],
+        "source_parts": [dict(item) for item in row.get("source_parts") or [] if isinstance(item, dict)],
         "all_times": all_times,
         "warnings": [str(item) for item in row.get("warnings") or [] if item],
     }
@@ -328,6 +333,13 @@ def _merge_actual(target: dict[str, Any], source: dict[str, Any]) -> None:
         filenames = target.setdefault("source_filenames", [])
         if source["source_filename"] not in filenames:
             filenames.append(source["source_filename"])
+    for key in ("source_part_filenames", "source_preview_paths", "source_parts"):
+        for value in source.get(key) or []:
+            if value not in target.setdefault(key, []):
+                target[key].append(value)
+    for key in ("source_part_filename", "source_preview_path"):
+        if source.get(key) and not target.get(key):
+            target[key] = source[key]
     for warning in source.get("warnings") or []:
         if warning not in target.setdefault("warnings", []):
             target["warnings"].append(warning)
@@ -350,6 +362,11 @@ def _compare_entry(
         "actual_out": actual.get("actual_out", "") if actual else "",
         "source_filename": actual.get("source_filename", "") if actual else "",
         "source_filenames": actual.get("source_filenames", []) if actual else [],
+        "source_part_filename": actual.get("source_part_filename", "") if actual else "",
+        "source_part_filenames": actual.get("source_part_filenames", []) if actual else [],
+        "source_preview_path": actual.get("source_preview_path", "") if actual else "",
+        "source_preview_paths": actual.get("source_preview_paths", []) if actual else [],
+        "source_parts": actual.get("source_parts", []) if actual else [],
         "name_match_score": actual.get("match_score", "") if actual else "",
         "name_match_type": actual.get("match_type", "") if actual else "",
         "raw_late_minutes": "",
@@ -470,6 +487,11 @@ def _unscheduled_row(key: tuple[str, str], actual: dict[str, Any]) -> dict[str, 
         "actual_out": actual.get("actual_out", ""),
         "source_filename": actual.get("source_filename", ""),
         "source_filenames": actual.get("source_filenames", []),
+        "source_part_filename": actual.get("source_part_filename", ""),
+        "source_part_filenames": actual.get("source_part_filenames", []),
+        "source_preview_path": actual.get("source_preview_path", ""),
+        "source_preview_paths": actual.get("source_preview_paths", []),
+        "source_parts": actual.get("source_parts", []),
         "name_match_score": actual.get("match_score", ""),
         "name_match_type": actual.get("match_type", ""),
         "raw_late_minutes": "",
@@ -508,6 +530,11 @@ def _unmatched_actual_row(actual: dict[str, Any]) -> dict[str, Any]:
         "actual_out": actual.get("actual_out", ""),
         "source_filename": actual.get("source_filename", ""),
         "source_filenames": actual.get("source_filenames", []),
+        "source_part_filename": actual.get("source_part_filename", ""),
+        "source_part_filenames": actual.get("source_part_filenames", []),
+        "source_preview_path": actual.get("source_preview_path", ""),
+        "source_preview_paths": actual.get("source_preview_paths", []),
+        "source_parts": actual.get("source_parts", []),
         "name_match_score": actual.get("match_score", ""),
         "name_match_type": actual.get("match_type", ""),
         "raw_late_minutes": "",

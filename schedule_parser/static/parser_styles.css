@@ -727,6 +727,226 @@ h3 {
   max-height: 320px;
 }
 
+.oil-card-review {
+  margin-top: 14px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.oil-card-toolbar,
+.oil-card-files-head,
+.oil-card-preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.oil-card-toolbar {
+  min-height: 58px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: #123d46;
+  color: #ffffff;
+}
+
+.oil-card-toolbar h3,
+.oil-card-toolbar .eyebrow {
+  margin: 0;
+}
+
+.oil-card-toolbar .eyebrow {
+  color: #c9f2ed;
+}
+
+.oil-card-summary {
+  padding: 6px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 5px;
+  color: #e6fffb;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.oil-card-workspace {
+  display: grid;
+  grid-template-columns: minmax(230px, 310px) minmax(0, 1fr);
+  min-height: 520px;
+}
+
+.oil-card-files {
+  min-width: 0;
+  border-right: 1px solid var(--border);
+  background: #ffffff;
+}
+
+.oil-card-files-head,
+.oil-card-preview-head {
+  min-height: 50px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  background: #eef6f7;
+}
+
+.oil-card-files-head small,
+.oil-card-preview-head small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.oil-card-list {
+  display: grid;
+  gap: 5px;
+  max-height: 470px;
+  overflow: auto;
+  padding: 8px;
+}
+
+.oil-card-item {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  gap: 7px;
+  align-items: center;
+  min-height: 48px;
+  padding: 7px;
+  border: 1px solid #cfe1e4;
+  border-left: 3px solid #94a3b8;
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--text);
+  text-align: left;
+}
+
+.oil-card-item:hover,
+.oil-card-item.is-active {
+  border-color: #1d70d6;
+  border-left-color: #1d70d6;
+  background: #eff6ff;
+}
+
+.oil-card-item.is-done {
+  border-left-color: #00875a;
+}
+
+.oil-card-item.is-error,
+.oil-card-item.is-no-data {
+  border-left-color: #d97706;
+  background: #fffbeb;
+}
+
+.oil-card-index {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  background: #e0f2fe;
+  color: #075985;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.oil-card-item-main {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.oil-card-item-main strong,
+.oil-card-preview-head strong {
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.oil-card-item-main small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.oil-card-status {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.oil-card-item.is-done .oil-card-status {
+  color: #007a52;
+}
+
+.oil-card-item.is-error .oil-card-status,
+.oil-card-item.is-no-data .oil-card-status {
+  color: #a34a00;
+}
+
+.oil-card-preview {
+  min-width: 0;
+  background: #ffffff;
+}
+
+.oil-card-preview-head > div:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.oil-card-preview-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+}
+
+.oil-card-preview-tools button {
+  min-width: 34px;
+  min-height: 30px;
+  padding: 5px 8px;
+}
+
+.oil-card-preview-tools span {
+  min-width: 44px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.oil-card-preview-stage {
+  display: grid;
+  place-items: center;
+  height: 470px;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  background: #f5f7fa;
+}
+
+.oil-card-preview-stage.dragging {
+  cursor: grabbing;
+}
+
+.oil-card-preview-stage img {
+  max-width: 100%;
+  max-height: 100%;
+  cursor: grab;
+  object-fit: contain;
+  transform-origin: center center;
+  will-change: transform;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
 .dng-sheet-review {
   margin-top: 14px;
   border: 1px solid var(--border);
@@ -2695,6 +2915,30 @@ summary:hover {
 
   .review-workspace {
     grid-template-columns: 1fr;
+  }
+
+  .oil-card-toolbar,
+  .oil-card-preview-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .oil-card-workspace {
+    grid-template-columns: 1fr;
+    min-height: 0;
+  }
+
+  .oil-card-files {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .oil-card-list {
+    max-height: 260px;
+  }
+
+  .oil-card-preview-stage {
+    height: 360px;
   }
 
   .dng-sheet-toolbar,

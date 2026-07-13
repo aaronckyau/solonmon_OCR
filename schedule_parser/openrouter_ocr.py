@@ -550,6 +550,8 @@ def _apply_source_metadata_to_rows(
             row["source_part_filename"] = metadata["source_part_filename"]
         if "source_part_label" in metadata:
             row["source_part_label"] = metadata["source_part_label"]
+        if "source_preview_path" in metadata:
+            row["source_preview_path"] = metadata["source_preview_path"]
         if "source_crop_box" in metadata:
             row["source_crop_box"] = metadata["source_crop_box"]
         part = _source_part_from_row(row)
@@ -621,12 +623,15 @@ def merge_logsheet_daily_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]
         source_part_filenames = _present_list(row.get("source_part_filenames") or [row.get("source_part_filename")])
         source_pages = _present_list(row.get("source_pages") or [row.get("source_page")])
         source_card_nos = _present_list(row.get("source_card_nos") or [row.get("source_card_no")])
+        source_preview_paths = _present_list(row.get("source_preview_paths") or [row.get("source_preview_path")])
         if source_part_filenames:
             _append_unique(target.setdefault("source_part_filenames", []), source_part_filenames)
         if source_pages:
             _append_unique(target.setdefault("source_pages", []), source_pages)
         if source_card_nos:
             _append_unique(target.setdefault("source_card_nos", []), source_card_nos)
+        if source_preview_paths:
+            _append_unique(target.setdefault("source_preview_paths", []), source_preview_paths)
         source_part = _source_part_from_row(row)
         if source_part:
             _append_source_part(target.setdefault("source_parts", []), source_part)
@@ -655,6 +660,8 @@ def merge_logsheet_daily_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]
             target["source_card_no"] = target["source_card_nos"][0]
         if target.get("source_part_filenames") and not target.get("source_part_filename"):
             target["source_part_filename"] = target["source_part_filenames"][0]
+        if target.get("source_preview_paths") and not target.get("source_preview_path"):
+            target["source_preview_path"] = target["source_preview_paths"][0]
 
     return [merged[key] for key in order]
 
@@ -952,6 +959,7 @@ def _source_part_from_row(row: dict[str, Any]) -> dict[str, Any]:
         "source_card_no",
         "source_part_filename",
         "source_part_label",
+        "source_preview_path",
         "source_crop_box",
     ):
         value = row.get(key)

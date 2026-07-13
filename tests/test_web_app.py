@@ -32,6 +32,82 @@ def test_health_returns_ok():
     assert response.get_json() == {"status": "ok"}
 
 
+def test_prepare_logsheet_returns_preview_and_part_ocr(monkeypatch, tmp_path):
+    monkeypatch.setenv("OCR_PREVIEW_DIR", str(tmp_path / "ocr-previews"))
+
+    def fake_ocr(file_bytes, filename, *, mime_type=None, prompt=None, source_filename=None, source_metadata=None):
+        return {
+            "source_filename": source_filename,
+            "source_part_filename": filename,
+            "source_metadata": source_metadata,
+            "configured_model": "fake-model",
+            "response_model": "fake-model",
+            "finish_reason": "stop",
+            "structured": {},
+            "daily_rows": [
+                {
+                    "name": "Poon Wai Ching Crystal",
+                    "date": "2025-01-02",
+                    "in": "09:40",
+                    "out": "18:46",
+                    "source_filename": source_filename,
+                    "source_filenames": [source_filename],
+                    "source_preview_path": source_metadata.get("source_preview_path"),
+                    "source_parts": [
+                        {"source_preview_path": source_metadata.get("source_preview_path")}
+                    ],
+                }
+            ],
+            "usage": {},
+            "annotations": [],
+        }
+
+    monkeypatch.setattr("schedule_parser.web.ocr_logsheet_with_openrouter", fake_ocr)
+    test_client = client()
+    prepare_response = test_client.post(
+        "/api/prepare-logsheet",
+        data={
+            "logsheet": (BytesIO(png_bytes()), "Poon Wai Ching Crystal.png"),
+            "project_profile": "oil_street",
+            "enhance_image": "0",
+        },
+        content_type="multipart/form-data",
+    )
+    prepare_payload = prepare_response.get_json()
+
+    assert prepare_response.status_code == 200
+    assert prepare_payload["ok"] is True
+    assert prepare_payload["prepared"]["source_count"] == 1
+    assert prepare_payload["prepared"]["part_count"] == 1
+    part = prepare_payload["prepared"]["parts"][0]
+    assert part["source_filename"] == "Poon_Wai_Ching_Crystal.png"
+    assert part["preview_path"].startswith("/api/ocr-preview/")
+
+    preview_response = test_client.get(part["preview_path"])
+    assert preview_response.status_code == 200
+    assert preview_response.mimetype == "image/png"
+    assert preview_response.data == png_bytes()
+
+    ocr_response = test_client.post(
+        f"/api/ocr-logsheet-part/{part['preview_id']}",
+        data={"project_profile": "oil_street"},
+    )
+    ocr_payload = ocr_response.get_json()
+    assert ocr_response.status_code == 200
+    assert ocr_payload["ok"] is True
+    assert len(ocr_payload["ocr"]["daily_rows"]) == 1
+    row = ocr_payload["ocr"]["daily_rows"][0]
+    assert row["source_preview_path"] == part["preview_path"]
+    assert row["source_parts"][0]["source_preview_path"] == part["preview_path"]
+
+
+def test_ocr_preview_rejects_unknown_token(monkeypatch, tmp_path):
+    monkeypatch.setenv("OCR_PREVIEW_DIR", str(tmp_path / "ocr-previews"))
+    response = client().get("/api/ocr-preview/not-a-valid-token")
+
+    assert response.status_code == 404
+
+
 def test_index_sets_api_base_from_script_root():
     root_response = client().get("/")
     prefixed_response = client().get("/", environ_overrides={"SCRIPT_NAME": "/hr_scan"})
@@ -87,6 +163,12 @@ def test_index_renders_upload_page():
     assert "影像增強" in body
     assert "OCR 表格" in body
     assert "ocrProgress" in body
+    assert "oilCardReviewPanel" in body
+    assert "oilCardList" in body
+    assert "oilCardPreviewImage" in body
+    assert "oilCardZoomOutButton" in body
+    assert "oilCardZoomInButton" in body
+    assert "oilCardResetButton" in body
     assert "dngSheetReviewPanel" in body
     assert "dngOcrCurrentButton" in body
     assert "dngSaveSheetButton" in body
@@ -182,6 +264,28 @@ def test_project_step_supports_heritage_log_sheet_copy():
     assert 'fetch(apiUrl("/api/ocr-logsheet")' in script
     assert 'fetch(apiUrl("/api/compare-roster")' in script
     assert 'fetch("/api/' not in script
+
+
+def test_oil_street_card_review_supports_prepare_preview_and_part_ocr():
+    root = Path(__file__).parents[1]
+    body = (root / "schedule_parser" / "templates" / "parser_index.html").read_text(encoding="utf-8")
+    script = (root / "schedule_parser" / "static" / "parser_app.js").read_text(encoding="utf-8")
+    styles = (root / "schedule_parser" / "static" / "parser_styles.css").read_text(encoding="utf-8")
+
+    assert 'id="oilCardReviewPanel"' in body
+    assert 'id="oilCardList"' in body
+    assert 'id="oilCardPreviewStage"' in body
+    assert 'id="oilCardPreviewImage"' in body
+    assert 'fetch(apiUrl("/api/prepare-logsheet")' in script
+    assert 'fetch(apiUrl(`/api/ocr-logsheet-part/${encodeURIComponent(part.previewId)}`)' in script
+    assert "async function ocrPreparedOilStreetFiles" in script
+    assert "runPreparedOcrWorkers(extraPrompt, 3)" in script
+    assert "function renderOilCardReview" in script
+    assert "function reviewLogsheetFiles" in script
+    assert "function sourcePreviewFilenamesForRow" in script
+    assert ".oil-card-workspace" in styles
+    assert ".oil-card-preview-stage" in styles
+    assert ".oil-card-item.is-done" in styles
 
 
 def test_step_two_summary_omits_low_value_cards():

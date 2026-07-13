@@ -182,6 +182,10 @@ const state = {
   scheduleConfirmed: false,
   selectedRosterStaff: "",
   logsheetFiles: [],
+  ocrPreviewFiles: [],
+  activeOilCardKey: "",
+  oilCardImageView: { x: 0, y: 0, scale: 1 },
+  oilCardImageDrag: null,
   activeLogsheetFileKey: "",
   dngSheetRows: [],
   dngDraftRowsByFileKey: {},
@@ -229,6 +233,18 @@ const els = {
   ocrTableSection: document.getElementById("ocrTableSection"),
   ocrRowCount: document.getElementById("ocrRowCount"),
   ocrTableBody: document.getElementById("ocrTableBody"),
+  oilCardReviewPanel: document.getElementById("oilCardReviewPanel"),
+  oilCardSummary: document.getElementById("oilCardSummary"),
+  oilCardList: document.getElementById("oilCardList"),
+  oilCardPreviewTitle: document.getElementById("oilCardPreviewTitle"),
+  oilCardPreviewMeta: document.getElementById("oilCardPreviewMeta"),
+  oilCardPreviewStage: document.getElementById("oilCardPreviewStage"),
+  oilCardPreviewImage: document.getElementById("oilCardPreviewImage"),
+  oilCardPreviewEmpty: document.getElementById("oilCardPreviewEmpty"),
+  oilCardZoomOut: document.getElementById("oilCardZoomOutButton"),
+  oilCardZoomIn: document.getElementById("oilCardZoomInButton"),
+  oilCardReset: document.getElementById("oilCardResetButton"),
+  oilCardZoomValue: document.getElementById("oilCardZoomValue"),
   compareStatus: document.getElementById("compareStatus"),
   compareButton: document.getElementById("compareButton"),
   lateGraceMinutes: document.getElementById("lateGraceMinutesInput"),
@@ -364,6 +380,17 @@ els.downloadOcr?.addEventListener("click", downloadOcrJson);
 els.compareButton.addEventListener("click", () => refreshRosterComparison({ userAction: true }));
 els.logsheetAssignmentList?.addEventListener("change", handleLogsheetAssignmentChange);
 els.logsheetAssignmentList?.addEventListener("click", handleLogsheetPreviewClick);
+els.oilCardList?.addEventListener("click", handleOilCardClick);
+els.oilCardZoomOut?.addEventListener("click", () => zoomOilCardPreview(0.82));
+els.oilCardZoomIn?.addEventListener("click", () => zoomOilCardPreview(1.18));
+els.oilCardReset?.addEventListener("click", resetOilCardImageView);
+els.oilCardPreviewStage?.addEventListener("wheel", handleOilCardWheel, { passive: false });
+els.oilCardPreviewStage?.addEventListener("dragstart", (event) => event.preventDefault());
+els.oilCardPreviewStage?.addEventListener("pointerdown", handleOilCardPointerDown);
+els.oilCardPreviewStage?.addEventListener("pointermove", handleOilCardPointerMove);
+els.oilCardPreviewStage?.addEventListener("pointerup", endOilCardDrag);
+els.oilCardPreviewStage?.addEventListener("pointercancel", endOilCardDrag);
+els.oilCardPreviewStage?.addEventListener("dblclick", resetOilCardImageView);
 els.dngSheetFileList?.addEventListener("click", handleDngSheetFileClick);
 els.dngPrevSheet?.addEventListener("click", () => shiftDngSheet(-1));
 els.dngNextSheet?.addEventListener("click", () => shiftDngSheet(1));
@@ -417,6 +444,7 @@ els.rosterDetailImageStage?.addEventListener("dblclick", resetRosterImageView);
 applyProjectProfileCopy();
 renderHolidayStatus();
 renderLogsheetAssignments();
+renderOilCardReview();
 renderDngSheetReview();
 updateWorkflowState();
 
@@ -457,11 +485,16 @@ function isDAndGProfile() {
   return state.projectProfile === "d_and_g";
 }
 
+function isOilStreetProfile() {
+  return state.projectProfile === "oil_street";
+}
+
 function selectProjectProfile(profileId) {
   const nextProfileId = PROJECT_PROFILES[profileId] ? profileId : DEFAULT_PROJECT_PROFILE;
   state.projectProfile = nextProfileId;
   applyProjectProfileCopy();
   renderLogsheetAssignments();
+  renderOilCardReview();
   renderDngSheetReview();
   updateWorkflowState();
   setWorkflowStep("schedule-upload");
@@ -647,6 +680,10 @@ async function ocrSelectedLogsheet() {
     ocrPendingDngSheets();
     return;
   }
+  if (isOilStreetProfile()) {
+    await ocrPreparedOilStreetFiles(files);
+    return;
+  }
   const extraPrompt = els.ocrPrompt.value.trim();
   state.ocr = createOcrAggregate(files);
   renderOcrResult();
@@ -820,14 +857,166 @@ function handleScheduleVariantChange() {
 
 function handleLogsheetFileSelectionChange() {
   const files = Array.from(els.logsheetFile?.files || []);
+  state.ocrPreviewFiles = [];
+  state.activeOilCardKey = "";
+  resetOilCardImageView();
   rememberLogsheetFiles(files);
   renderLogsheetAssignments();
+  renderOilCardReview();
   renderDngSheetReview();
 }
 
 async function ocrSingleFile(file, extraPrompt) {
   const form = new FormData();
   form.append("logsheet", file);
+  appendOcrRequestOptions(form, extraPrompt);
+  try {
+    const response = await fetch(apiUrl("/api/ocr-logsheet"), { method: "POST", body: form });
+    const payload = await readApiJson(response, "OCR 失敗：API 回傳格式不正確。");
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.error || "OCR 失敗。");
+    }
+    return payload.ocr;
+  } catch (error) {
+    throw new Error(apiErrorMessage(error, "/api/ocr-logsheet"));
+  }
+}
+
+async function ocrPreparedOilStreetFiles(files) {
+  const extraPrompt = els.ocrPrompt.value.trim();
+  state.ocr = createOcrAggregate(files);
+  state.ocrPreviewFiles = [];
+  state.activeOilCardKey = "";
+  renderOcrResult();
+  showOcrProgress(files.length);
+  setStatus(`正在分類打卡紙 (${files.length} 個檔案)...`);
+  els.ocr.disabled = true;
+  const preparedParts = [];
+  try {
+    for (let index = 0; index < files.length; index += 1) {
+      const file = files[index];
+      setOcrProgress(index, files.length, `正在分類：${file.name}`);
+      markOcrProgressItem(file.name, "running", "拆分員工打卡紙");
+      try {
+        const parts = await prepareOcrFile(file);
+        preparedParts.push(...parts);
+        markOcrProgressItem(file.name, parts.length ? "done" : "no-data", `${parts.length} 張`);
+      } catch (error) {
+        const message = error.message || String(error);
+        addOcrError(file.name, message);
+        markOcrProgressItem(file.name, "error", message);
+      }
+      setOcrProgress(index + 1, files.length, `已分類 ${index + 1} / ${files.length} 個檔案`);
+    }
+
+    setPreparedOcrParts(preparedParts);
+    if (!preparedParts.length) {
+      setStatus("沒有找到可辨識的員工打卡紙。", true);
+      return;
+    }
+
+    state.ocr.ocr_part_count = preparedParts.length;
+    state.ocr.source_part_filenames = state.ocrPreviewFiles.map((file) => file.name);
+    showOcrProgress(preparedParts.length);
+    setStatus(`已分類 ${preparedParts.length} 張打卡紙，正在逐張 OCR...`);
+    await runPreparedOcrWorkers(extraPrompt, 3);
+
+    const rows = ocrRows();
+    const errorCount = (state.ocr.errors || []).length;
+    const noDataCount = (state.ocr.no_data_files || []).length;
+    if (errorCount) {
+      setStatus(`OCR 部分完成：${rows.length} 筆，${errorCount} 張失敗。`, true);
+    } else if (noDataCount) {
+      setStatus(`OCR 完成：${rows.length} 筆，${noDataCount} 張需要覆核。`, true);
+    } else {
+      setStatus(`OCR 完成：${rows.length} 筆。`);
+    }
+    await refreshRosterComparison();
+    if (rows.length) setWorkflowStep("manage-schedule");
+  } finally {
+    els.ocr.disabled = false;
+    renderOilCardReview();
+  }
+}
+
+async function runPreparedOcrWorkers(extraPrompt, concurrency) {
+  const files = state.ocrPreviewFiles;
+  let cursor = 0;
+  let completed = 0;
+  const worker = async () => {
+    while (cursor < files.length) {
+      const index = cursor;
+      cursor += 1;
+      const file = files[index];
+      file.ocrStatus = "running";
+      file.ocrError = "";
+      renderOilCardReview();
+      const progressLabel = oilCardProgressLabel(file);
+      markOcrProgressItem(progressLabel, "running", "辨識中");
+      try {
+        const result = await ocrPreparedPart(file, extraPrompt);
+        const rows = rowsFromOcrResult(result);
+        addOcrResult(result);
+        file.ocrRows = rows.length;
+        file.ocrStatus = rows.length ? "done" : "no-data";
+        if (!rows.length) addOcrNoData(file.name);
+        markOcrProgressItem(progressLabel, rows.length ? "done" : "no-data", `${rows.length} 筆`);
+      } catch (error) {
+        const message = error.message || String(error);
+        file.ocrStatus = "error";
+        file.ocrError = message;
+        addOcrError(file.name, message);
+        markOcrProgressItem(progressLabel, "error", message);
+      }
+      completed += 1;
+      setOcrProgress(completed, files.length, `已完成 ${completed} / ${files.length} 張`);
+      renderOcrResult();
+    }
+  };
+  const workerCount = Math.min(Math.max(1, concurrency), files.length);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+}
+
+function oilCardProgressLabel(file) {
+  const page = file.metadata?.source_page ? ` p.${file.metadata.source_page}` : "";
+  return `${file.displayName}${page}`;
+}
+
+async function prepareOcrFile(file) {
+  const form = new FormData();
+  form.append("logsheet", file);
+  appendOcrRequestOptions(form, "");
+  try {
+    const response = await fetch(apiUrl("/api/prepare-logsheet"), { method: "POST", body: form });
+    const payload = await readApiJson(response, "分類打卡紙失敗：API 回傳格式不正確。");
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.error || "分類打卡紙失敗。");
+    }
+    return Array.isArray(payload.prepared?.parts) ? payload.prepared.parts : [];
+  } catch (error) {
+    throw new Error(apiErrorMessage(error, "/api/prepare-logsheet"));
+  }
+}
+
+async function ocrPreparedPart(part, extraPrompt) {
+  const form = new FormData();
+  appendOcrRequestOptions(form, extraPrompt);
+  try {
+    const response = await fetch(apiUrl(`/api/ocr-logsheet-part/${encodeURIComponent(part.previewId)}`), {
+      method: "POST",
+      body: form,
+    });
+    const payload = await readApiJson(response, "打卡紙 OCR 失敗：API 回傳格式不正確。");
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.error || "打卡紙 OCR 失敗。");
+    }
+    return payload.ocr;
+  } catch (error) {
+    throw new Error(apiErrorMessage(error, "/api/ocr-logsheet-part"));
+  }
+}
+
+function appendOcrRequestOptions(form, extraPrompt) {
   form.append("project_profile", state.projectProfile);
   const staffNames = (state.schedule?.staff || [])
     .map((staff) => String(staff?.name || staff?.staff_name || "").trim())
@@ -839,16 +1028,6 @@ async function ocrSingleFile(file, extraPrompt) {
     form.append("prompt", extraPrompt);
   }
   form.append("enhance_image", els.ocrEnhanceImage?.checked === false ? "0" : "1");
-  try {
-    const response = await fetch(apiUrl("/api/ocr-logsheet"), { method: "POST", body: form });
-    const payload = await readApiJson(response, "OCR 失敗：API 回傳格式不正確。");
-    if (!response.ok || !payload.ok) {
-      throw new Error(payload.error || "OCR 失敗。");
-    }
-    return payload.ocr;
-  } catch (error) {
-    throw new Error(apiErrorMessage(error, "/api/ocr-logsheet"));
-  }
 }
 
 function rememberLogsheetFiles(files) {
@@ -887,6 +1066,198 @@ function isPreviewableLogsheetImage(file) {
   return /\.(jpe?g|png|webp)$/i.test(String(file?.name || ""));
 }
 
+function setPreparedOcrParts(parts) {
+  state.ocrPreviewFiles = (parts || []).map((part, index) => {
+    const metadata = part.metadata && typeof part.metadata === "object" ? part.metadata : {};
+    const staffName = String(metadata.source_staff_name_hint || "").trim();
+    const previewPath = String(part.preview_path || metadata.source_preview_path || "").trim();
+    const mimeType = String(part.mime_type || "").toLowerCase();
+    return {
+      name: String(part.filename || `timecard-${index + 1}.jpg`),
+      displayName: staffName || `待配對打卡紙 ${index + 1}`,
+      type: mimeType,
+      previewId: String(part.preview_id || ""),
+      previewPath,
+      previewUrl: mimeType.startsWith("image/") && previewPath ? apiUrl(previewPath) : "",
+      sourceFilename: String(part.source_filename || ""),
+      assignedStaff: staffName,
+      metadata,
+      preprocessing: part.preprocessing || {},
+      uploadOrder: index,
+      ocrStatus: "prepared",
+      ocrRows: 0,
+      ocrError: "",
+      isGeneratedPreview: true,
+    };
+  });
+  if (!state.ocrPreviewFiles.some((file) => file.previewId === state.activeOilCardKey)) {
+    state.activeOilCardKey = state.ocrPreviewFiles[0]?.previewId || "";
+    resetOilCardImageView();
+  }
+  renderOilCardReview();
+  renderLogsheetAssignments();
+}
+
+function reviewLogsheetFiles() {
+  if (isOilStreetProfile() && state.ocrPreviewFiles.length) return state.ocrPreviewFiles;
+  return state.logsheetFiles || [];
+}
+
+function activeOilCardFile() {
+  return state.ocrPreviewFiles.find((file) => file.previewId === state.activeOilCardKey) || null;
+}
+
+function renderOilCardReview() {
+  if (!els.oilCardReviewPanel) return;
+  const files = state.ocrPreviewFiles || [];
+  const enabled = isOilStreetProfile() && files.length > 0;
+  els.oilCardReviewPanel.hidden = !enabled;
+  if (!enabled) return;
+
+  const completed = files.filter((file) => file.ocrStatus === "done").length;
+  const staffCount = new Set(files.map((file) => file.assignedStaff).filter(Boolean)).size;
+  if (els.oilCardSummary) {
+    els.oilCardSummary.textContent = `${files.length} 張 · ${staffCount} 位員工 · ${completed} 張完成`;
+  }
+  if (els.oilCardList) {
+    els.oilCardList.innerHTML = files.map((file, index) => {
+      const active = file.previewId === state.activeOilCardKey;
+      const statusClass = oilCardStatusClass(file);
+      return `
+        <button type="button" class="oil-card-item ${statusClass}${active ? " is-active" : ""}" data-oil-card-key="${escapeAttr(file.previewId)}">
+          <span class="oil-card-index">${index + 1}</span>
+          <span class="oil-card-item-main">
+            <strong>${escapeHtml(file.displayName)}</strong>
+            <small>${escapeHtml(oilCardSourceLabel(file))}</small>
+          </span>
+          <span class="oil-card-status">${escapeHtml(oilCardStatusLabel(file))}</span>
+        </button>
+      `;
+    }).join("");
+  }
+  renderOilCardPreview(activeOilCardFile());
+}
+
+function oilCardSourceLabel(file) {
+  const page = file.metadata?.source_page ? `第 ${file.metadata.source_page} 頁` : "";
+  const cards = file.metadata?.source_card_nos
+    || (file.metadata?.source_card_no ? [file.metadata.source_card_no] : []);
+  const cardLabel = cards.length ? `Card ${cards.join(" + ")}` : "已裁切預覽";
+  return [page, cardLabel].filter(Boolean).join(" · ");
+}
+
+function oilCardStatusClass(file) {
+  if (file.ocrStatus === "done") return "is-done";
+  if (file.ocrStatus === "error") return "is-error";
+  if (file.ocrStatus === "no-data") return "is-no-data";
+  return "";
+}
+
+function oilCardStatusLabel(file) {
+  if (file.ocrStatus === "running") return "OCR 中";
+  if (file.ocrStatus === "done") return `${file.ocrRows} 筆`;
+  if (file.ocrStatus === "error") return "失敗";
+  if (file.ocrStatus === "no-data") return "需覆核";
+  return "已分類";
+}
+
+function renderOilCardPreview(file) {
+  if (els.oilCardPreviewTitle) els.oilCardPreviewTitle.textContent = file?.displayName || "未選擇";
+  if (els.oilCardPreviewMeta) {
+    els.oilCardPreviewMeta.textContent = file
+      ? `${oilCardSourceLabel(file)} · ${oilCardStatusLabel(file)}`
+      : "分類後選擇一位員工";
+  }
+  if (!els.oilCardPreviewImage || !els.oilCardPreviewEmpty) return;
+  if (file?.previewUrl) {
+    els.oilCardPreviewImage.src = file.previewUrl;
+    els.oilCardPreviewImage.draggable = false;
+    els.oilCardPreviewImage.hidden = false;
+    els.oilCardPreviewEmpty.hidden = true;
+    applyOilCardTransform();
+  } else {
+    els.oilCardPreviewImage.removeAttribute("src");
+    els.oilCardPreviewImage.hidden = true;
+    els.oilCardPreviewEmpty.hidden = false;
+    els.oilCardPreviewEmpty.textContent = "這張打卡紙沒有可顯示的圖片預覽。";
+  }
+  updateOilCardZoomUi();
+}
+
+function handleOilCardClick(event) {
+  const button = event.target.closest("[data-oil-card-key]");
+  if (!button) return;
+  const nextKey = button.dataset.oilCardKey || "";
+  if (state.activeOilCardKey !== nextKey) {
+    state.activeOilCardKey = nextKey;
+    resetOilCardImageView();
+  }
+  renderOilCardReview();
+}
+
+function zoomOilCardPreview(factor) {
+  state.oilCardImageView.scale = clamp(state.oilCardImageView.scale * factor, 0.5, 5);
+  applyOilCardTransform();
+  updateOilCardZoomUi();
+}
+
+function resetOilCardImageView() {
+  state.oilCardImageView = { x: 0, y: 0, scale: 1 };
+  state.oilCardImageDrag = null;
+  els.oilCardPreviewStage?.classList.remove("dragging");
+  applyOilCardTransform();
+  updateOilCardZoomUi();
+}
+
+function applyOilCardTransform() {
+  if (!els.oilCardPreviewImage || els.oilCardPreviewImage.hidden) return;
+  const { x, y, scale } = state.oilCardImageView;
+  els.oilCardPreviewImage.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+}
+
+function updateOilCardZoomUi() {
+  if (els.oilCardZoomValue) {
+    els.oilCardZoomValue.textContent = `${Math.round(state.oilCardImageView.scale * 100)}%`;
+  }
+}
+
+function handleOilCardWheel(event) {
+  if (!activeOilCardFile()?.previewUrl) return;
+  event.preventDefault();
+  zoomOilCardPreview(event.deltaY < 0 ? 1.12 : 0.88);
+}
+
+function handleOilCardPointerDown(event) {
+  if (!activeOilCardFile()?.previewUrl) return;
+  state.oilCardImageDrag = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    imageX: state.oilCardImageView.x,
+    imageY: state.oilCardImageView.y,
+  };
+  els.oilCardPreviewStage?.setPointerCapture(event.pointerId);
+  els.oilCardPreviewStage?.classList.add("dragging");
+}
+
+function handleOilCardPointerMove(event) {
+  const drag = state.oilCardImageDrag;
+  if (!drag || drag.pointerId !== event.pointerId) return;
+  state.oilCardImageView.x = drag.imageX + event.clientX - drag.startX;
+  state.oilCardImageView.y = drag.imageY + event.clientY - drag.startY;
+  applyOilCardTransform();
+}
+
+function endOilCardDrag(event) {
+  const drag = state.oilCardImageDrag;
+  if (!drag || drag.pointerId !== event.pointerId) return;
+  state.oilCardImageDrag = null;
+  els.oilCardPreviewStage?.classList.remove("dragging");
+  if (els.oilCardPreviewStage?.hasPointerCapture(event.pointerId)) {
+    els.oilCardPreviewStage.releasePointerCapture(event.pointerId);
+  }
+}
+
 function compareDngLogsheetFiles(left, right) {
   const leftDate = left.inferredDate || "";
   const rightDate = right.inferredDate || "";
@@ -910,7 +1281,7 @@ function dngLogsheetFileDateLabel(file) {
 function renderLogsheetAssignments() {
   if (!els.logsheetAssignmentList) return;
   const profile = currentProjectProfile();
-  const files = state.logsheetFiles || [];
+  const files = reviewLogsheetFiles();
   const assignedCount = files.filter((file) => file.assignedStaff).length;
   if (els.logsheetAssignmentSummary) {
     els.logsheetAssignmentSummary.textContent = `${files.length} sheets${assignedCount ? ` / ${assignedCount} assigned` : ""}`;
@@ -934,7 +1305,7 @@ function renderLogsheetAssignments() {
       <article class="logsheet-file-card${file.assignedStaff ? " is-assigned" : ""}">
         <div class="logsheet-file-index">${index + 1}</div>
         <div class="logsheet-file-body">
-          <button type="button" class="logsheet-file-name" title="${escapeAttr(file.name)}" data-logsheet-preview-key="${escapeAttr(key)}">${escapeHtml(file.name)}</button>
+          <button type="button" class="logsheet-file-name" title="${escapeAttr(file.name)}" data-logsheet-preview-key="${escapeAttr(key)}">${escapeHtml(file.displayName || file.name)}</button>
           <div class="logsheet-file-meta">
             <span>${escapeHtml(status)}</span>
             <span>${rowCount} rows</span>
@@ -944,7 +1315,7 @@ function renderLogsheetAssignments() {
             <span>Point to staff</span>
             <select data-logsheet-file-key="${escapeAttr(key)}">${options}</select>
           </label>
-          <div class="logsheet-file-hint">Filename: ${escapeHtml(inferred)}</div>
+          <div class="logsheet-file-hint">${file.isGeneratedPreview ? escapeHtml(oilCardSourceLabel(file)) : `Filename: ${escapeHtml(inferred)}`}</div>
         </div>
       </article>
     `;
@@ -2180,7 +2551,13 @@ function ocrRowsForFileKey(fileKey) {
 
 function ocrRowFileKeys(row) {
   const keys = new Set();
-  [row?.source_filename, ...(row?.source_filenames || [])].forEach((filename) => {
+  [
+    row?.source_filename,
+    ...(row?.source_filenames || []),
+    row?.source_part_filename,
+    ...(row?.source_part_filenames || []),
+    ...(row?.source_parts || []).map((part) => part?.source_part_filename),
+  ].forEach((filename) => {
     const key = logsheetFileKey(filename);
     if (key) keys.add(key);
   });
@@ -2225,7 +2602,7 @@ async function handleLogsheetAssignmentChange(event) {
   const select = event.target.closest("select[data-logsheet-file-key]");
   if (!select) return;
   const fileKey = select.dataset.logsheetFileKey || "";
-  const file = (state.logsheetFiles || []).find((item) => logsheetFileKey(item.name) === fileKey);
+  const file = logsheetFileByKey(fileKey);
   if (!file) return;
   file.assignedStaff = select.value || "";
   applyLogsheetStaffAssignmentsToRows();
@@ -2249,7 +2626,7 @@ function applyLogsheetStaffAssignmentsToRows() {
   if (!state.ocr) return;
   const rows = ocrRows();
   if (!rows.length) return;
-  const assignments = new Map((state.logsheetFiles || [])
+  const assignments = new Map(reviewLogsheetFiles()
     .filter((file) => file.assignedStaff)
     .map((file) => [logsheetFileKey(file.name), file.assignedStaff]));
   rows.forEach((row) => {
@@ -2275,8 +2652,17 @@ function assignedStaffForOcrRow(row, assignments) {
 
 function revokeLogsheetFileUrls() {
   (state.logsheetFiles || []).forEach((file) => {
-    if (file.previewUrl) URL.revokeObjectURL(file.previewUrl);
+    if (file.previewUrl && !file.isGeneratedPreview) URL.revokeObjectURL(file.previewUrl);
   });
+}
+
+function sourcePreviewFilenamesForRow(row) {
+  const partFilenames = [...new Set([
+    row?.source_part_filename,
+    ...(row?.source_part_filenames || []),
+    ...(row?.source_parts || []).map((part) => part?.source_part_filename),
+  ].map((filename) => String(filename || "").trim()).filter(Boolean))];
+  return partFilenames.length ? partFilenames : sourceFilenamesForRow(row);
 }
 
 function clearPage() {
@@ -2299,6 +2685,10 @@ function clearPage() {
   state.scheduleConfirmed = false;
   state.selectedRosterStaff = "";
   state.logsheetFiles = [];
+  state.ocrPreviewFiles = [];
+  state.activeOilCardKey = "";
+  state.oilCardImageView = { x: 0, y: 0, scale: 1 };
+  state.oilCardImageDrag = null;
   state.activeLogsheetFileKey = "";
   state.dngSheetRows = [];
   state.dngDraftRowsByFileKey = {};
@@ -2317,6 +2707,7 @@ function clearPage() {
   if (els.rosterShowZero) els.rosterShowZero.checked = true;
   syncGraceInputs();
   clearOcrResult();
+  renderOilCardReview();
   clearComparison("尚未解析排班表和 OCR。");
   if (els.search) els.search.value = "";
   if (els.staffFilter) els.staffFilter.innerHTML = '<option value="">全部員工</option>';
@@ -2653,6 +3044,7 @@ function renderOcrResult() {
   }
   renderOcrTable(rows);
   renderLogsheetAssignments();
+  renderOilCardReview();
   renderDngSheetReview();
   els.ocrOutput.hidden = false;
   els.ocrOutput.textContent = pretty(state.ocr);
@@ -2668,6 +3060,7 @@ function clearOcrResult() {
   clearTable(els.ocrTableBody);
   hideOcrProgress();
   renderLogsheetAssignments();
+  renderOilCardReview();
   renderDngSheetReview();
   updateWorkflowState();
 }
@@ -2772,7 +3165,7 @@ function renderComparison(comparison) {
     comparisonStatusLabelForRow(row),
     formatComparisonFlags(row.flags || []),
     row.notes,
-    htmlCell(sourceLinksHtml(sourceFilenamesForRow(row), row.staff_name || row.ocr_name || "")),
+    htmlCell(sourceLinksHtml(sourcePreviewFilenamesForRow(row), row.staff_name || row.ocr_name || "")),
   ], comparisonRowClass);
   renderRosterSummary(rows);
   renderLogsheetAssignments();
@@ -3443,7 +3836,7 @@ function rosterStaffDetailRows(staffName) {
         statusLabel: statusLabelForDetail(statusInfo.status, compareRow),
         difference: detailDifferenceText(entry, compareRow),
         source: compareRow?.source_filename || (compareRow?.source_filenames || []).join(", ") || "",
-        sourceFilenames: sourceFilenamesForRow(compareRow),
+        sourceFilenames: sourcePreviewFilenamesForRow(compareRow),
         canAdd: !compareRow?.has_actual,
         canDelete: Boolean(compareRow?.has_actual),
       });
@@ -3464,7 +3857,7 @@ function rosterStaffDetailRows(staffName) {
         statusLabel: "未排班",
         difference: row.notes || "有打卡資料但 roster 沒有排班。",
         source: row.source_filename || (row.source_filenames || []).join(", ") || "",
-        sourceFilenames: sourceFilenamesForRow(row),
+        sourceFilenames: sourcePreviewFilenamesForRow(row),
         canAdd: false,
         canDelete: true,
       });
@@ -3790,7 +4183,7 @@ function staffLogsheetFiles(staffName) {
   const sourceFileKeys = staffLogsheetSourceFileKeys(staffName);
   const sourceMatched = [];
   const fallbackMatched = [];
-  (state.logsheetFiles || []).forEach((file) => {
+  reviewLogsheetFiles().forEach((file) => {
     const fileKey = logsheetFileKey(file.name);
     if (sourceFileKeys.has(fileKey)) {
       sourceMatched.push(file);
@@ -3812,14 +4205,14 @@ function staffLogsheetSourceFileKeys(staffName) {
   (state.comparison?.rows || []).forEach((row) => {
     if (!row.has_actual) return;
     if (!sameStaffName(row.staff_name, staffName) && !sameStaffName(row.ocr_name, staffName)) return;
-    [row.source_filename, ...(row.source_filenames || [])].forEach((filename) => {
+    sourcePreviewFilenamesForRow(row).forEach((filename) => {
       const key = logsheetFileKey(filename);
       if (key) keys.add(key);
     });
   });
   ocrRows().forEach((row) => {
     if (!sameStaffName(row.name, staffName) && !sameStaffName(staffNameFromFilename(row.source_filename), staffName)) return;
-    [row.source_filename, ...(row.source_filenames || [])].forEach((filename) => {
+    sourcePreviewFilenamesForRow(row).forEach((filename) => {
       const key = logsheetFileKey(filename);
       if (key) keys.add(key);
     });
@@ -3932,7 +4325,7 @@ function renderRosterColumnStructure(table, splitHolidayColumns) {
 }
 
 function logsheetFileByKey(fileKey) {
-  return (state.logsheetFiles || []).find((file) => logsheetFileKey(file.name) === fileKey) || null;
+  return reviewLogsheetFiles().find((file) => logsheetFileKey(file.name) === fileKey) || null;
 }
 
 function staffNameForLogsheetFile(file) {
@@ -3962,7 +4355,7 @@ function openLogsheetFilePreview(fileKey, staffName = "") {
   state.rosterImageFileName = "";
   resetRosterImageView();
   if (els.rosterDetailModal) els.rosterDetailModal.hidden = false;
-  if (els.rosterDetailTitle) els.rosterDetailTitle.textContent = file.name;
+  if (els.rosterDetailTitle) els.rosterDetailTitle.textContent = file.displayName || file.name;
   if (els.rosterDetailMeta) els.rosterDetailMeta.textContent = "來源文件預覽";
   if (els.rosterDetailHoursSummary) {
     els.rosterDetailHoursSummary.hidden = true;
@@ -3987,7 +4380,11 @@ function renderRosterDetailImageFiles(files, sourceFileKeys = new Set()) {
   const file = files[state.rosterImageIndex] || null;
   const imageUrl = file?.previewUrl || "";
   updateRosterImageControls(files);
-  if (els.rosterDetailImageTitle) els.rosterDetailImageTitle.textContent = file?.name || "沒有圖片";
+  if (els.rosterDetailImageTitle) {
+    els.rosterDetailImageTitle.textContent = file
+      ? `${file.displayName || file.name}${file.isGeneratedPreview ? ` · ${oilCardSourceLabel(file)}` : ""}`
+      : "沒有圖片";
+  }
   if (els.rosterDetailImageEmpty) {
     els.rosterDetailImageEmpty.hidden = Boolean(imageUrl);
     els.rosterDetailImageEmpty.textContent = rosterDetailImageEmptyText(files, sourceFileKeys);
@@ -4265,6 +4662,7 @@ function mergeOcrDailyRows(rows) {
         source_part_filenames: [],
         source_pages: [],
         source_card_nos: [],
+        source_preview_paths: [],
         source_parts: [],
         original_name: row.original_name || name || "",
         assigned_staff_name: row.assigned_staff_name || "",
@@ -4279,6 +4677,7 @@ function mergeOcrDailyRows(rows) {
     appendUnique(target.source_part_filenames, row.source_part_filenames || [row.source_part_filename].filter(Boolean));
     appendUnique(target.source_pages, row.source_pages || [row.source_page].filter(Boolean));
     appendUnique(target.source_card_nos, row.source_card_nos || [row.source_card_no].filter(Boolean));
+    appendUnique(target.source_preview_paths, row.source_preview_paths || [row.source_preview_path].filter(Boolean));
     appendUniqueSourceParts(target.source_parts, sourcePartsFromRow(row));
     appendUnique(target.warnings, row.warnings || []);
     appendUnique(target.all_times, extractTimes([row.all_times, row.in, row.out]));
@@ -4296,6 +4695,7 @@ function mergeOcrDailyRows(rows) {
     if (!target.source_page && target.source_pages.length) target.source_page = target.source_pages[0];
     if (!target.source_card_no && target.source_card_nos.length) target.source_card_no = target.source_card_nos[0];
     if (!target.source_part_filename && target.source_part_filenames.length) target.source_part_filename = target.source_part_filenames[0];
+    if (!target.source_preview_path && target.source_preview_paths.length) target.source_preview_path = target.source_preview_paths[0];
   });
   return [...merged.values()];
 }
@@ -4308,7 +4708,7 @@ function formatOcrSourceHtml(row) {
   if (cards.length) parts.push(`card ${cards.join("/")}`);
   const partNames = row.source_part_filenames || (row.source_part_filename ? [row.source_part_filename] : []);
   const sourceText = parts.join(" · ") || partNames.join(", ") || "";
-  const links = sourceLinksHtml(sourceFilenamesForRow(row), row.name || row.ocr_name || "");
+  const links = sourceLinksHtml(sourcePreviewFilenamesForRow(row), row.name || row.ocr_name || "");
   return [escapeHtml(sourceText), links].filter(Boolean).join(sourceText && links ? "<br>" : "");
 }
 
@@ -4320,7 +4720,7 @@ function sourcePartsFromRow(row) {
     });
   }
   const ownPart = {};
-  ["source_page", "source_card_no", "source_part_filename", "source_part_label"].forEach((key) => {
+  ["source_page", "source_card_no", "source_part_filename", "source_part_label", "source_preview_path"].forEach((key) => {
     if (row[key] !== null && row[key] !== undefined && row[key] !== "") ownPart[key] = row[key];
   });
   if (Object.keys(ownPart).length) parts.push(ownPart);
@@ -4431,6 +4831,7 @@ function renderAll() {
   renderShiftTimes(schedule.shift_times || {});
   renderStaffFilter(schedule.staff || []);
   renderLogsheetAssignments();
+  renderOilCardReview();
   renderDngSheetReview();
   renderHolidayStatus();
   renderEntries();

@@ -241,6 +241,7 @@ def test_ocr_client_attaches_source_metadata_to_rows(monkeypatch):
             "source_card_no": 2,
             "source_part_filename": "Poon Wai Ching Crystal__card_2.jpg",
             "source_part_label": "card 2",
+            "source_preview_path": "/api/ocr-preview/0123456789abcdef0123456789abcdef",
         },
     )
 
@@ -253,6 +254,7 @@ def test_ocr_client_attaches_source_metadata_to_rows(monkeypatch):
             "source_card_no": "2",
             "source_part_filename": "Poon Wai Ching Crystal__card_2.jpg",
             "source_part_label": "card 2",
+            "source_preview_path": "/api/ocr-preview/0123456789abcdef0123456789abcdef",
         }
     ]
 
