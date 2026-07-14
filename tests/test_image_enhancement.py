@@ -179,6 +179,38 @@ def test_prepare_oil_street_all_staff_pdf_splits_one_source_per_card():
     assert jade_crop["right"] - jade_crop["left"] >= 280
 
 
+def test_prepare_oil_street_pdf_problem_cards_keep_complete_width_and_height():
+    sample = (
+        Path(__file__).parents[1]
+        / "doc"
+        / "Testing"
+        / "Testing"
+        / "Oil Street"
+        / "June 2026"
+        / "Oi! timecard_June 2026 (All Staff).pdf"
+    )
+    if not sample.exists():
+        pytest.skip("Oil Street all-staff PDF fixture is not available")
+
+    sources = prepare_oil_street_timecard_sources(
+        sample.read_bytes(),
+        sample.name,
+        mime_type="application/pdf",
+        enabled=False,
+        staff_names=OIL_JUNE_STAFF_NAMES,
+    )
+
+    targets = [
+        source
+        for source in sources
+        if source.metadata["source_staff_name_hint"] in {"Law Suet Shan", "Ma Pui Ying Joy"}
+    ]
+    assert len(targets) == 4
+    assert all(source.preprocessing["source_crop_size"]["width"] >= 290 for source in targets)
+    assert all(source.preprocessing["source_crop_size"]["height"] >= 820 for source in targets)
+    assert all(source.metadata["source_split_method"] == "pdf_staff_labels" for source in targets)
+
+
 def test_prepare_oil_street_pdf_cards_are_large_enough_for_stamp_ocr():
     sample = (
         Path(__file__).parents[1]
@@ -231,3 +263,17 @@ def test_timecard_column_crop_bounds_follow_irregular_card_positions():
     assert len(bounds) == 6
     assert bounds[-1][0] < starts[-1]
     assert bounds[-1][1] > ends[-1]
+
+
+def test_timecard_column_crop_bounds_reject_implausibly_narrow_columns():
+    image = Image.new("RGB", (1512, 1134), "white")
+    pixels = image.load()
+    intervals = [(360, 472), (846, 895), (899, 945), (1092, 1142), (1158, 1202), (1343, 1387)]
+    for left, right in intervals:
+        for y in range(25, 46):
+            for x in range(left, right):
+                pixels[x, y] = (35, 90, 190)
+
+    bounds = _timecard_column_crop_bounds(image, 6, 1)
+
+    assert bounds == []
