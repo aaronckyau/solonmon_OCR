@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from io import BytesIO
-import math
 import mimetypes
 from pathlib import Path
 import re
@@ -305,16 +304,21 @@ def _prepare_oil_street_pdf_timecard_sources(
         row_images = _pdf_page_timecard_row_images(page)
         if not row_images:
             continue
+        row_crop_plans = {
+            card_no: _timecard_row_crop_plan(row_image, len(labels), card_no)
+            for card_no, row_image in row_images.items()
+        }
         for staff_index, staff_label in enumerate(labels, start=1):
             staff_name_hint = staff_label.roster_name
             for card_no, row_image in sorted(row_images.items()):
-                label_bounds = _pdf_staff_label_crop_bounds(labels, row_image.width)
+                column_bounds, column_split_method = row_crop_plans[card_no]
                 card, crop_box, split_method = _crop_timecard_from_row(
                     row_image,
                     staff_index - 1,
                     len(labels),
                     card_no,
-                    column_bounds=label_bounds,
+                    column_bounds=column_bounds,
+                    column_split_method=column_split_method,
                 )
                 crop_size = {"width": card.width, "height": card.height}
                 card_scale_factor = 1.0
@@ -503,16 +507,13 @@ def _crop_timecard_from_row(
     card_no: int,
     *,
     column_bounds: list[tuple[int, int]] | None = None,
+    column_split_method: str | None = None,
 ) -> tuple[Image.Image, dict[str, int], str]:
     if _timecard_crop_bounds_are_plausible(column_bounds or [], image.width, count):
         bounds = column_bounds or []
-        split_method = "pdf_staff_labels"
+        split_method = column_split_method or "provided_bounds"
     else:
-        bounds = _timecard_column_crop_bounds(image, count, card_no)
-        split_method = "color_header"
-    if not _timecard_crop_bounds_are_plausible(bounds, image.width, count):
-        bounds = _equal_timecard_crop_bounds(image.width, count)
-        split_method = "equal_grid_fallback"
+        bounds, split_method = _timecard_row_crop_plan(image, count, card_no)
 
     if 0 <= index < len(bounds):
         crop_left, crop_right = bounds[index]
@@ -535,41 +536,18 @@ def _crop_timecard_from_row(
     }, split_method
 
 
-def _pdf_staff_label_crop_bounds(
-    labels: list[PdfStaffLabel],
-    image_width: int,
-) -> list[tuple[int, int]]:
-    if len(labels) < 2 or image_width <= 0:
-        return []
-    positions = [label.x for label in labels]
-    if not all(math.isfinite(position) for position in positions):
-        return []
-    gaps = [right - left for left, right in zip(positions, positions[1:])]
-    if not gaps or any(gap <= 0 for gap in gaps):
-        return []
-    typical_gap = sorted(gaps)[len(gaps) // 2]
-    if min(gaps) < typical_gap * 0.45 or max(gaps) > typical_gap * 1.8:
-        return []
-
-    layout_left = positions[0] - typical_gap / 2
-    layout_right = positions[-1] + typical_gap / 2
-    layout_width = layout_right - layout_left
-    if layout_width <= 0:
-        return []
-
-    edges = [layout_left]
-    edges.extend((left + right) / 2 for left, right in zip(positions, positions[1:]))
-    edges.append(layout_right)
-    mapped_edges = [round((edge - layout_left) / layout_width * image_width) for edge in edges]
-    expected_width = image_width / len(labels)
-    margin = max(6, round(expected_width * 0.25))
-    bounds = [
-        (max(0, mapped_edges[index] - margin), min(image_width, mapped_edges[index + 1] + margin))
-        for index in range(len(labels))
-    ]
-    if not _timecard_crop_bounds_are_plausible(bounds, image_width, len(labels)):
-        return []
-    return bounds
+def _timecard_row_crop_plan(
+    image: Image.Image,
+    count: int,
+    card_no: int,
+) -> tuple[list[tuple[int, int]], str]:
+    bounds = _timecard_column_crop_bounds(image, count, card_no)
+    if _timecard_crop_bounds_are_plausible(bounds, image.width, count):
+        return bounds, "color_header"
+    bounds = _timecard_color_extent_crop_bounds(image, count, card_no)
+    if _timecard_crop_bounds_are_plausible(bounds, image.width, count):
+        return bounds, "color_extent_grid"
+    return _equal_timecard_crop_bounds(image.width, count), "equal_grid_fallback"
 
 
 def _timecard_column_crop_bounds(
@@ -586,7 +564,6 @@ def _timecard_column_crop_bounds(
     if not pitches:
         return [(0, image.width)]
     typical_pitch = pitches[len(pitches) // 2]
-    margin = max(6, round(typical_pitch * 0.05))
     bounds: list[tuple[int, int]] = []
     for index, start in enumerate(starts):
         if index + 1 < len(starts):
@@ -595,7 +572,47 @@ def _timecard_column_crop_bounds(
             remaining = image.width - start
             inferred_end = max(intervals[index][1], start + typical_pitch)
             end = image.width if remaining <= typical_pitch * 1.35 else inferred_end
-        bounds.append((max(0, start - margin), min(image.width, end + margin)))
+        bounds.append((max(0, start), min(image.width, end)))
+    if not _timecard_crop_bounds_are_plausible(bounds, image.width, count):
+        return []
+    return bounds
+
+
+def _timecard_color_extent_crop_bounds(
+    image: Image.Image,
+    count: int,
+    card_no: int,
+) -> list[tuple[int, int]]:
+    if count <= 0 or image.width <= 0:
+        return []
+    sample, scale = _resize_for_detection(image)
+    pixels = sample.load()
+    cutoff = max(1, round(sample.height * 0.55))
+    color_counts = [
+        sum(1 for y in range(cutoff) if _is_card_header_pixel(pixels[x, y], card_no))
+        for x in range(sample.width)
+    ]
+    peak = max(color_counts, default=0)
+    if peak <= 0:
+        return []
+    threshold = max(3, round(peak * 0.035))
+    active_columns = [index for index, value in enumerate(color_counts) if value >= threshold]
+    if not active_columns:
+        return []
+
+    layout_left = active_columns[0] / scale
+    layout_right = (active_columns[-1] + 1) / scale
+    detected_pitch = (layout_right - layout_left) / count
+    if detected_pitch <= 0:
+        return []
+    outer_padding = max(2, round(detected_pitch * 0.02))
+    layout_left = max(0, layout_left - outer_padding)
+    layout_right = min(image.width, layout_right + outer_padding)
+    pitch = (layout_right - layout_left) / count
+    bounds = [
+        (round(layout_left + index * pitch), round(layout_left + (index + 1) * pitch))
+        for index in range(count)
+    ]
     if not _timecard_crop_bounds_are_plausible(bounds, image.width, count):
         return []
     return bounds
@@ -609,16 +626,16 @@ def _timecard_crop_bounds_are_plausible(
     if count <= 0 or image_width <= 0 or len(bounds) != count:
         return False
     expected_width = image_width / count
-    minimum_width = expected_width * 0.65
+    minimum_width = expected_width * 0.5
     maximum_width = expected_width * 1.75
-    previous_left = -1
+    previous_right = -1
     for left, right in bounds:
         width = right - left
-        if left < 0 or right > image_width or left >= right or left < previous_left:
+        if left < 0 or right > image_width or left >= right or left < previous_right:
             return False
         if width < minimum_width or width > maximum_width:
             return False
-        previous_left = left
+        previous_right = right
     return True
 
 
@@ -626,11 +643,10 @@ def _equal_timecard_crop_bounds(image_width: int, count: int) -> list[tuple[int,
     if image_width <= 0 or count <= 0:
         return []
     pitch = image_width / count
-    margin = max(6, round(pitch * 0.08))
     return [
         (
-            max(0, round(index * pitch) - margin),
-            min(image_width, round((index + 1) * pitch) + margin),
+            round(index * pitch),
+            round((index + 1) * pitch),
         )
         for index in range(count)
     ]

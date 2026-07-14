@@ -176,7 +176,7 @@ def test_prepare_oil_street_all_staff_pdf_splits_one_source_per_card():
         and source.metadata["source_card_no"] == 1
     )
     jade_crop = jade_card_1.metadata["source_crop_box"]
-    assert jade_crop["right"] - jade_crop["left"] >= 280
+    assert 230 <= jade_crop["right"] - jade_crop["left"] <= 320
 
 
 def test_prepare_oil_street_pdf_problem_cards_keep_complete_width_and_height():
@@ -206,9 +206,45 @@ def test_prepare_oil_street_pdf_problem_cards_keep_complete_width_and_height():
         if source.metadata["source_staff_name_hint"] in {"Law Suet Shan", "Ma Pui Ying Joy"}
     ]
     assert len(targets) == 4
-    assert all(source.preprocessing["source_crop_size"]["width"] >= 290 for source in targets)
+    assert all(source.preprocessing["source_crop_size"]["width"] >= 230 for source in targets)
     assert all(source.preprocessing["source_crop_size"]["height"] >= 820 for source in targets)
-    assert all(source.metadata["source_split_method"] == "pdf_staff_labels" for source in targets)
+    assert all(source.metadata["source_split_method"] == "color_extent_grid" for source in targets)
+
+
+def test_prepare_oil_street_pdf_card_crops_do_not_overlap_adjacent_staff():
+    sample = (
+        Path(__file__).parents[1]
+        / "doc"
+        / "Testing"
+        / "Testing"
+        / "Oil Street"
+        / "June 2026"
+        / "Oi! timecard_June 2026 (All Staff).pdf"
+    )
+    if not sample.exists():
+        pytest.skip("Oil Street all-staff PDF fixture is not available")
+
+    sources = prepare_oil_street_timecard_sources(
+        sample.read_bytes(),
+        sample.name,
+        mime_type="application/pdf",
+        enabled=False,
+        staff_names=OIL_JUNE_STAFF_NAMES,
+    )
+
+    for page_number in range(1, 6):
+        for card_no in (1, 2):
+            row = sorted(
+                (
+                    source
+                    for source in sources
+                    if source.metadata["source_page"] == page_number
+                    and source.metadata["source_card_no"] == card_no
+                ),
+                key=lambda source: source.metadata["source_staff_index"],
+            )
+            for current, following in zip(row, row[1:]):
+                assert current.metadata["source_crop_box"]["right"] <= following.metadata["source_crop_box"]["left"]
 
 
 def test_prepare_oil_street_pdf_cards_are_large_enough_for_stamp_ocr():
@@ -239,7 +275,7 @@ def test_prepare_oil_street_pdf_cards_are_large_enough_for_stamp_ocr():
     )
 
     with Image.open(BytesIO(source.file_bytes)) as image:
-        assert image.width >= 800
+        assert image.width >= 780
         assert image.height >= 2000
 
 
@@ -261,8 +297,9 @@ def test_timecard_column_crop_bounds_follow_irregular_card_positions():
     bounds = _timecard_column_crop_bounds(image, 6, 1)
 
     assert len(bounds) == 6
-    assert bounds[-1][0] < starts[-1]
-    assert bounds[-1][1] > ends[-1]
+    assert bounds[-1][0] == starts[-1]
+    assert bounds[-1][1] >= ends[-1]
+    assert all(current[1] <= following[0] for current, following in zip(bounds, bounds[1:]))
 
 
 def test_timecard_column_crop_bounds_reject_implausibly_narrow_columns():
