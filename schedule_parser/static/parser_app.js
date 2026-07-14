@@ -956,6 +956,8 @@ async function runPreparedOcrWorkers(extraPrompt, concurrency) {
       try {
         const result = await ocrPreparedPart(file, extraPrompt);
         const rows = rowsFromOcrResult(result);
+        file.ocrDailyRows = rows;
+        updateOilCardIdentity(file, rows);
         addOcrResult(result);
         file.ocrRows = rows.length;
         file.ocrStatus = rows.length ? "done" : "no-data";
@@ -1069,18 +1071,24 @@ function isPreviewableLogsheetImage(file) {
 function setPreparedOcrParts(parts) {
   state.ocrPreviewFiles = (parts || []).map((part, index) => {
     const metadata = part.metadata && typeof part.metadata === "object" ? part.metadata : {};
-    const staffName = String(metadata.source_staff_name_hint || "").trim();
+    const hintStaff = String(metadata.source_staff_name_hint || "").trim();
     const previewPath = String(part.preview_path || metadata.source_preview_path || "").trim();
     const mimeType = String(part.mime_type || "").toLowerCase();
     return {
       name: String(part.filename || `timecard-${index + 1}.jpg`),
-      displayName: staffName || `待配對打卡紙 ${index + 1}`,
+      displayName: hintStaff ? `${hintStaff}（PDF 標籤）` : `待配對打卡紙 ${index + 1}`,
       type: mimeType,
       previewId: String(part.preview_id || ""),
       previewPath,
       previewUrl: mimeType.startsWith("image/") && previewPath ? apiUrl(previewPath) : "",
       sourceFilename: String(part.source_filename || ""),
-      assignedStaff: staffName,
+      assignedStaff: "",
+      resolvedStaff: "",
+      visibleCardName: "",
+      hintStaff,
+      identityStatus: "pending",
+      originalIdentityStatus: "pending",
+      ocrDailyRows: [],
       metadata,
       preprocessing: part.preprocessing || {},
       uploadOrder: index,
@@ -1096,6 +1104,31 @@ function setPreparedOcrParts(parts) {
   }
   renderOilCardReview();
   renderLogsheetAssignments();
+}
+
+function updateOilCardIdentity(file, rows) {
+  const identityRows = (rows || []).filter((row) => row && typeof row === "object");
+  const primary = identityRows.find((row) => row.name_identity_status === "conflict")
+    || identityRows.find((row) => row.name_identity_status === "hint_fallback")
+    || identityRows[0]
+    || {};
+  const identityStatus = String(primary.name_identity_status || "").trim();
+  const visibleCardName = String(primary.ocr_name || "").trim();
+  const resolvedStaff = String(primary.name || "").trim();
+  const hintStaff = String(primary.source_staff_name_hint || file.hintStaff || "").trim();
+
+  file.identityStatus = identityStatus || (resolvedStaff ? "recognized" : "unresolved");
+  file.originalIdentityStatus = file.identityStatus;
+  file.visibleCardName = visibleCardName;
+  file.resolvedStaff = identityStatus === "conflict" ? "" : resolvedStaff;
+  file.hintStaff = hintStaff;
+  if (identityStatus === "conflict") {
+    file.displayName = `${visibleCardName || resolvedStaff || "姓名未辨識"}（需覆核）`;
+  } else if (identityStatus === "hint_fallback") {
+    file.displayName = `${hintStaff || resolvedStaff || "姓名未辨識"}（標籤暫配）`;
+  } else {
+    file.displayName = resolvedStaff || visibleCardName || hintStaff || file.displayName;
+  }
 }
 
 function reviewLogsheetFiles() {
@@ -1115,7 +1148,7 @@ function renderOilCardReview() {
   if (!enabled) return;
 
   const completed = files.filter((file) => file.ocrStatus === "done").length;
-  const staffCount = new Set(files.map((file) => file.assignedStaff).filter(Boolean)).size;
+  const staffCount = new Set(files.map((file) => file.assignedStaff || file.resolvedStaff).filter(Boolean)).size;
   if (els.oilCardSummary) {
     els.oilCardSummary.textContent = `${files.length} 張 · ${staffCount} 位員工 · ${completed} 張完成`;
   }
@@ -1147,6 +1180,8 @@ function oilCardSourceLabel(file) {
 }
 
 function oilCardStatusClass(file) {
+  if (file.identityStatus === "manual_override") return "is-done";
+  if (file.identityStatus === "conflict" || file.identityStatus === "hint_fallback") return "is-warning";
   if (file.ocrStatus === "done") return "is-done";
   if (file.ocrStatus === "error") return "is-error";
   if (file.ocrStatus === "no-data") return "is-no-data";
@@ -1155,6 +1190,9 @@ function oilCardStatusClass(file) {
 
 function oilCardStatusLabel(file) {
   if (file.ocrStatus === "running") return "OCR 中";
+  if (file.identityStatus === "manual_override") return "已手動配對";
+  if (file.identityStatus === "conflict") return "姓名衝突";
+  if (file.identityStatus === "hint_fallback") return "姓名需覆核";
   if (file.ocrStatus === "done") return `${file.ocrRows} 筆`;
   if (file.ocrStatus === "error") return "失敗";
   if (file.ocrStatus === "no-data") return "需覆核";
@@ -1165,7 +1203,7 @@ function renderOilCardPreview(file) {
   if (els.oilCardPreviewTitle) els.oilCardPreviewTitle.textContent = file?.displayName || "未選擇";
   if (els.oilCardPreviewMeta) {
     els.oilCardPreviewMeta.textContent = file
-      ? `${oilCardSourceLabel(file)} · ${oilCardStatusLabel(file)}`
+      ? [oilCardSourceLabel(file), oilCardIdentityLabel(file), oilCardStatusLabel(file)].filter(Boolean).join(" · ")
       : "分類後選擇一位員工";
   }
   if (!els.oilCardPreviewImage || !els.oilCardPreviewEmpty) return;
@@ -1182,6 +1220,23 @@ function renderOilCardPreview(file) {
     els.oilCardPreviewEmpty.textContent = "這張打卡紙沒有可顯示的圖片預覽。";
   }
   updateOilCardZoomUi();
+}
+
+function oilCardIdentityLabel(file) {
+  if (!file) return "";
+  if (file.identityStatus === "conflict") {
+    return `卡面：${file.visibleCardName || "未辨識"}；PDF：${file.hintStaff || "未提供"}`;
+  }
+  if (file.identityStatus === "hint_fallback") {
+    return `卡面未辨識；PDF：${file.hintStaff || "未提供"}`;
+  }
+  if (file.identityStatus === "manual_override") {
+    return `已手動配對：${file.assignedStaff || file.resolvedStaff}`;
+  }
+  if (file.visibleCardName && file.hintStaff && file.visibleCardName !== file.hintStaff) {
+    return `卡面：${file.visibleCardName}；配對：${file.resolvedStaff || file.hintStaff}`;
+  }
+  return file.resolvedStaff ? `配對：${file.resolvedStaff}` : "";
 }
 
 function handleOilCardClick(event) {
@@ -2605,9 +2660,19 @@ async function handleLogsheetAssignmentChange(event) {
   const file = logsheetFileByKey(fileKey);
   if (!file) return;
   file.assignedStaff = select.value || "";
+  if (file.isGeneratedPreview) {
+    if (file.assignedStaff) {
+      file.identityStatus = "manual_override";
+      file.resolvedStaff = file.assignedStaff;
+      file.displayName = `${file.assignedStaff}（已手動配對）`;
+    } else {
+      updateOilCardIdentity(file, file.ocrDailyRows || []);
+    }
+  }
   applyLogsheetStaffAssignmentsToRows();
   renderOcrResult();
   renderLogsheetAssignments();
+  renderOilCardReview();
   if (state.schedule && ocrRows().length) {
     await refreshRosterComparison({ userAction: true });
   }
@@ -2631,12 +2696,17 @@ function applyLogsheetStaffAssignmentsToRows() {
     .map((file) => [logsheetFileKey(file.name), file.assignedStaff]));
   rows.forEach((row) => {
     if (!Object.hasOwn(row, "original_name")) row.original_name = row.name || "";
+    if (!Object.hasOwn(row, "original_name_identity_status")) {
+      row.original_name_identity_status = row.name_identity_status || "";
+    }
     const assignedStaff = assignedStaffForOcrRow(row, assignments);
     if (assignedStaff) {
       row.name = assignedStaff;
       row.assigned_staff_name = assignedStaff;
+      row.name_identity_status = "manual_override";
     } else if (row.assigned_staff_name) {
       row.name = row.original_name || row.name;
+      row.name_identity_status = row.original_name_identity_status || "";
       delete row.assigned_staff_name;
     }
   });
@@ -4664,6 +4734,10 @@ function mergeOcrDailyRows(rows) {
         source_card_nos: [],
         source_preview_paths: [],
         source_parts: [],
+        ocr_name: row.ocr_name || "",
+        source_staff_name_hint: row.source_staff_name_hint || "",
+        name_identity_status: row.name_identity_status || "",
+        original_name_identity_status: row.original_name_identity_status || "",
         original_name: row.original_name || name || "",
         assigned_staff_name: row.assigned_staff_name || "",
         all_times: [],
@@ -4672,6 +4746,16 @@ function mergeOcrDailyRows(rows) {
     }
     const target = merged.get(key);
     target.name = target.name || name || null;
+    target.ocr_name = target.ocr_name || row.ocr_name || "";
+    target.source_staff_name_hint = target.source_staff_name_hint || row.source_staff_name_hint || "";
+    target.name_identity_status = strongerNameIdentityStatus(
+      target.name_identity_status,
+      row.name_identity_status,
+    );
+    target.original_name_identity_status = strongerNameIdentityStatus(
+      target.original_name_identity_status,
+      row.original_name_identity_status,
+    );
     target.date = target.date || date || null;
     appendUnique(target.source_filenames, row.source_filenames || [row.source_filename].filter(Boolean));
     appendUnique(target.source_part_filenames, row.source_part_filenames || [row.source_part_filename].filter(Boolean));
@@ -4698,6 +4782,15 @@ function mergeOcrDailyRows(rows) {
     if (!target.source_preview_path && target.source_preview_paths.length) target.source_preview_path = target.source_preview_paths[0];
   });
   return [...merged.values()];
+}
+
+function strongerNameIdentityStatus(current, candidate) {
+  const priority = { matched_hint: 1, hint_fallback: 2, conflict: 3, manual_override: 4 };
+  const currentStatus = String(current || "").trim();
+  const candidateStatus = String(candidate || "").trim();
+  return (priority[candidateStatus] || 0) > (priority[currentStatus] || 0)
+    ? candidateStatus
+    : currentStatus || candidateStatus;
 }
 
 function formatOcrSourceHtml(row) {

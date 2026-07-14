@@ -247,6 +247,8 @@ def _normalize_actual_row(row: dict[str, Any], schedule_dates: set[str]) -> dict
         "source_preview_path": _clean_text(row.get("source_preview_path")),
         "source_preview_paths": [str(item) for item in row.get("source_preview_paths") or [] if item],
         "source_parts": [dict(item) for item in row.get("source_parts") or [] if isinstance(item, dict)],
+        "source_staff_name_hint": _clean_text(row.get("source_staff_name_hint")),
+        "name_identity_status": _clean_text(row.get("name_identity_status")),
         "all_times": all_times,
         "warnings": [str(item) for item in row.get("warnings") or [] if item],
     }
@@ -343,6 +345,12 @@ def _merge_actual(target: dict[str, Any], source: dict[str, Any]) -> None:
     for warning in source.get("warnings") or []:
         if warning not in target.setdefault("warnings", []):
             target["warnings"].append(warning)
+    if source.get("source_staff_name_hint") and not target.get("source_staff_name_hint"):
+        target["source_staff_name_hint"] = source["source_staff_name_hint"]
+    target["name_identity_status"] = _stronger_identity_status(
+        target.get("name_identity_status"),
+        source.get("name_identity_status"),
+    )
 
 
 def _compare_entry(
@@ -367,6 +375,8 @@ def _compare_entry(
         "source_preview_path": actual.get("source_preview_path", "") if actual else "",
         "source_preview_paths": actual.get("source_preview_paths", []) if actual else [],
         "source_parts": actual.get("source_parts", []) if actual else [],
+        "source_staff_name_hint": actual.get("source_staff_name_hint", "") if actual else "",
+        "name_identity_status": actual.get("name_identity_status", "") if actual else "",
         "name_match_score": actual.get("match_score", "") if actual else "",
         "name_match_type": actual.get("match_type", "") if actual else "",
         "raw_late_minutes": "",
@@ -459,6 +469,12 @@ def _compare_entry(
 
 
 def _append_name_flags(row: dict[str, Any], actual: dict[str, Any]) -> None:
+    identity_note = _identity_review_note(actual)
+    if identity_note:
+        if "Name Check" not in row["flags"]:
+            row["flags"].append("Name Check")
+        row["notes"] = identity_note
+        return
     score = actual.get("match_score")
     if actual.get("ambiguous_match"):
         row["flags"].append("Name Check")
@@ -470,6 +486,7 @@ def _append_name_flags(row: dict[str, Any], actual: dict[str, Any]) -> None:
 
 
 def _unscheduled_row(key: tuple[str, str], actual: dict[str, Any]) -> dict[str, Any]:
+    identity_note = _identity_review_note(actual)
     return {
         "staff_name": key[0],
         "staff_id": actual.get("staff_id", ""),
@@ -492,6 +509,8 @@ def _unscheduled_row(key: tuple[str, str], actual: dict[str, Any]) -> dict[str, 
         "source_preview_path": actual.get("source_preview_path", ""),
         "source_preview_paths": actual.get("source_preview_paths", []),
         "source_parts": actual.get("source_parts", []),
+        "source_staff_name_hint": actual.get("source_staff_name_hint", ""),
+        "name_identity_status": actual.get("name_identity_status", ""),
         "name_match_score": actual.get("match_score", ""),
         "name_match_type": actual.get("match_type", ""),
         "raw_late_minutes": "",
@@ -503,8 +522,8 @@ def _unscheduled_row(key: tuple[str, str], actual: dict[str, Any]) -> dict[str, 
         "raw_overtime_minutes": 0,
         "overtime_minutes": 0,
         "status": "Unscheduled Punch",
-        "flags": ["Name Check"] if actual.get("match_score", 1) < LOW_CONFIDENCE_NAME_SCORE else [],
-        "notes": "OCR 有打卡紀錄，但 roster 同員工/日期沒有排班。",
+        "flags": ["Name Check"] if _needs_name_review(actual) else [],
+        "notes": identity_note or "OCR 有打卡紀錄，但 roster 同員工/日期沒有排班。",
         "has_schedule": False,
         "has_actual": True,
     }
@@ -513,6 +532,7 @@ def _unscheduled_row(key: tuple[str, str], actual: dict[str, Any]) -> dict[str, 
 def _unmatched_actual_row(actual: dict[str, Any]) -> dict[str, Any]:
     status = "Date Not Matched" if actual.get("staff_name") and not actual.get("date") else "Name Not Matched"
     note = "OCR 日期無法對齊到已解析 roster。" if status == "Date Not Matched" else "OCR 員工姓名無法配對到已解析 roster。"
+    identity_note = _identity_review_note(actual)
     return {
         "staff_name": actual.get("staff_name", ""),
         "staff_id": actual.get("staff_id", ""),
@@ -535,6 +555,8 @@ def _unmatched_actual_row(actual: dict[str, Any]) -> dict[str, Any]:
         "source_preview_path": actual.get("source_preview_path", ""),
         "source_preview_paths": actual.get("source_preview_paths", []),
         "source_parts": actual.get("source_parts", []),
+        "source_staff_name_hint": actual.get("source_staff_name_hint", ""),
+        "name_identity_status": actual.get("name_identity_status", ""),
         "name_match_score": actual.get("match_score", ""),
         "name_match_type": actual.get("match_type", ""),
         "raw_late_minutes": "",
@@ -546,11 +568,41 @@ def _unmatched_actual_row(actual: dict[str, Any]) -> dict[str, Any]:
         "raw_overtime_minutes": 0,
         "overtime_minutes": 0,
         "status": status,
-        "flags": ["Name Check"] if status == "Name Not Matched" else [],
-        "notes": note,
+        "flags": ["Name Check"] if status == "Name Not Matched" or _needs_name_review(actual) else [],
+        "notes": identity_note or note,
         "has_schedule": False,
         "has_actual": True,
     }
+
+
+def _needs_name_review(actual: dict[str, Any]) -> bool:
+    score = actual.get("match_score")
+    low_confidence = isinstance(score, (int, float)) and score < LOW_CONFIDENCE_NAME_SCORE
+    return bool(
+        actual.get("name_identity_status") in {"conflict", "hint_fallback"}
+        or actual.get("ambiguous_match")
+        or low_confidence
+    )
+
+
+def _identity_review_note(actual: dict[str, Any]) -> str:
+    status = actual.get("name_identity_status")
+    visible_name = actual.get("ocr_name") or "未能辨識"
+    hint = actual.get("source_staff_name_hint") or "未提供"
+    if status == "conflict":
+        return f"姓名衝突：卡面辨識為 {visible_name}；PDF 標籤為 {hint}，請覆核。"
+    if status == "hint_fallback":
+        return f"卡面姓名未能辨識，暫按 PDF 標籤 {hint} 配對，請覆核。"
+    return ""
+
+
+def _stronger_identity_status(current: Any, candidate: Any) -> str:
+    priority = {"matched_hint": 1, "hint_fallback": 2, "conflict": 3, "manual_override": 4}
+    current_status = _clean_text(current)
+    candidate_status = _clean_text(candidate)
+    if priority.get(candidate_status, 0) > priority.get(current_status, 0):
+        return candidate_status
+    return current_status or candidate_status
 
 
 def _normalize_ocr_date(value: Any, schedule_dates: set[str]) -> str:

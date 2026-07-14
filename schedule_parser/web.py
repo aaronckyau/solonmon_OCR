@@ -408,16 +408,21 @@ def _ocr_prompt_for_source(prompt: str | None, metadata: dict[str, Any]) -> str 
     if card_no:
         instruction = (
             "Oil Street PDF single-card instruction:\n"
-            f"- This image contains only Card {card_no} for exactly this staff member: {staff_name_hint}.\n"
-            f"- Return the row-level name exactly as: {staff_name_hint}.\n"
+            f"- This image contains only Card {card_no}.\n"
+            f"- The PDF positional label suggests {staff_name_hint}, but that hint may be wrong.\n"
+            "- Independently transcribe the name visibly written in the card's NAME field.\n"
+            "- Do not copy the PDF positional label when the visible card name differs.\n"
+            "- If the visible card name is blank or unreadable, return null for the name.\n"
             f"- Extract every worked day visible on Card {card_no}; do not summarize or omit sparse rows.\n"
             "- Read each stamped time from its own horizontal date row."
         )
     else:
         instruction = (
             "Oil Street PDF card-pair instruction:\n"
-            f"- The two visible half-month cards belong to exactly this staff member: {staff_name_hint}.\n"
-            f"- Return the row-level name exactly as: {staff_name_hint}.\n"
+            f"- The PDF positional label suggests {staff_name_hint}, but that hint may be wrong.\n"
+            "- Independently transcribe the name visibly written on each card.\n"
+            "- Do not copy the PDF positional label when either visible card name differs.\n"
+            "- If a visible card name is blank or unreadable, return null for that name.\n"
             "- Extract every worked day from both Card 1 and Card 2; do not summarize or omit sparse rows."
         )
     return f"{prompt}\n\n{instruction}".strip() if prompt else instruction

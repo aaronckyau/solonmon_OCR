@@ -222,7 +222,12 @@ def _ocr_logsheet_once_with_openrouter(
     message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
     text = _message_text(message.get("content"))
     structured = _extract_json_object(text)
-    daily_rows = normalize_logsheet_daily_rows(structured, source_filename or payload_filename, context_hint=prompt)
+    daily_rows = normalize_logsheet_daily_rows(
+        structured,
+        source_filename or payload_filename,
+        context_hint=prompt,
+        prefer_visible_name=bool((source_metadata or {}).get("source_staff_name_hint")),
+    )
     daily_rows = _apply_source_metadata_to_rows(daily_rows, source_metadata)
 
     return {
@@ -485,6 +490,7 @@ def normalize_logsheet_daily_rows(
     source_filename: str,
     *,
     context_hint: str | None = None,
+    prefer_visible_name: bool = False,
 ) -> list[dict[str, Any]]:
     if not isinstance(structured, (dict, list)):
         return []
@@ -501,7 +507,7 @@ def normalize_logsheet_daily_rows(
         ocr_name_hint = _string_or_none(_first_present(item, NAME_FIELD_NAMES)) or structured_name_hint
         if not times and not (keep_visible_rows_without_times and ocr_name_hint):
             continue
-        row_name = filename_name_hint or ocr_name_hint
+        row_name = ocr_name_hint if prefer_visible_name else filename_name_hint or ocr_name_hint
         card_no = _normalize_card_no(_first_present(item, CARD_FIELD_NAMES))
         row = {
             "name": row_name,
@@ -515,6 +521,8 @@ def normalize_logsheet_daily_rows(
         }
         if card_no:
             row["source_card_no"] = card_no
+        if prefer_visible_name and ocr_name_hint:
+            row["ocr_name"] = ocr_name_hint
         if row["all_times"]:
             row["in"] = row["all_times"][0]
             row["out"] = row["all_times"][-1] if len(row["all_times"]) > 1 else None
@@ -535,11 +543,27 @@ def _apply_source_metadata_to_rows(
     for row in rows:
         staff_name_hint = _string_or_none(metadata.get("source_staff_name_hint"))
         if staff_name_hint:
-            recognized_name = _string_or_none(row.get("name"))
-            if recognized_name and recognized_name != staff_name_hint:
-                row["ocr_name"] = recognized_name
-            row["name"] = staff_name_hint
+            recognized_name = _string_or_none(row.get("ocr_name") or row.get("name"))
             row["source_staff_name_hint"] = staff_name_hint
+            if recognized_name:
+                row["ocr_name"] = recognized_name
+                if _staff_names_are_compatible(recognized_name, staff_name_hint):
+                    row["name"] = staff_name_hint
+                    row["name_identity_status"] = "matched_hint"
+                else:
+                    row["name"] = recognized_name
+                    row["name_identity_status"] = "conflict"
+                    _append_identity_warning(
+                        row,
+                        f"姓名衝突：卡面辨識為 {recognized_name}；PDF 標籤為 {staff_name_hint}，請覆核。",
+                    )
+            else:
+                row["name"] = staff_name_hint
+                row["name_identity_status"] = "hint_fallback"
+                _append_identity_warning(
+                    row,
+                    f"卡面姓名未能辨識，暫按 PDF 標籤 {staff_name_hint} 配對，請覆核。",
+                )
         if "source_page" in metadata:
             row["source_page"] = metadata["source_page"]
         if "source_staff_index" in metadata:
@@ -558,6 +582,41 @@ def _apply_source_metadata_to_rows(
         if part:
             row["source_parts"] = [part]
     return rows
+
+
+def _staff_names_are_compatible(recognized_name: str, staff_name_hint: str) -> bool:
+    recognized_key = _normalized_identity_name(recognized_name)
+    hint_key = _normalized_identity_name(staff_name_hint)
+    if not recognized_key or not hint_key:
+        return False
+    if recognized_key == hint_key:
+        return True
+    if min(len(recognized_key), len(hint_key)) >= 3 and (
+        recognized_key in hint_key or hint_key in recognized_key
+    ):
+        return True
+    recognized_tokens = set(_identity_name_tokens(recognized_name))
+    hint_tokens = set(_identity_name_tokens(staff_name_hint))
+    return bool(recognized_tokens and hint_tokens) and (
+        recognized_tokens <= hint_tokens or hint_tokens <= recognized_tokens
+    )
+
+
+def _normalized_identity_name(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").casefold())
+
+
+def _identity_name_tokens(value: Any) -> list[str]:
+    return [token for token in re.split(r"[^a-z0-9]+", str(value or "").casefold()) if token]
+
+
+def _append_identity_warning(row: dict[str, Any], warning: str) -> None:
+    warnings = row.get("warnings")
+    if not isinstance(warnings, list):
+        warnings = []
+        row["warnings"] = warnings
+    if warning not in warnings:
+        warnings.append(warning)
 
 
 def _normalize_card_no(value: Any) -> str | None:
@@ -608,6 +667,10 @@ def merge_logsheet_daily_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]
                 merged[key]["original_name"] = original_name
             if assigned_staff_name:
                 merged[key]["assigned_staff_name"] = assigned_staff_name
+            if row.get("source_staff_name_hint"):
+                merged[key]["source_staff_name_hint"] = row["source_staff_name_hint"]
+            if row.get("name_identity_status"):
+                merged[key]["name_identity_status"] = row["name_identity_status"]
             order.append(key)
         target = merged[key]
         target["name"] = target["name"] or name
@@ -617,6 +680,14 @@ def merge_logsheet_daily_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]
             target["original_name"] = original_name
         if assigned_staff_name and not target.get("assigned_staff_name"):
             target["assigned_staff_name"] = assigned_staff_name
+        if row.get("source_staff_name_hint") and not target.get("source_staff_name_hint"):
+            target["source_staff_name_hint"] = row["source_staff_name_hint"]
+        identity_status = _stronger_identity_status(
+            target.get("name_identity_status"),
+            row.get("name_identity_status"),
+        )
+        if identity_status:
+            target["name_identity_status"] = identity_status
         target["date"] = target["date"] or date
         target["source_filename"] = target["source_filename"] or source_filename
         _append_unique(target["source_filenames"], row.get("source_filenames") or [source_filename])
@@ -664,6 +735,15 @@ def merge_logsheet_daily_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]
             target["source_preview_path"] = target["source_preview_paths"][0]
 
     return [merged[key] for key in order]
+
+
+def _stronger_identity_status(current: Any, candidate: Any) -> str | None:
+    priority = {"matched_hint": 1, "hint_fallback": 2, "conflict": 3, "manual_override": 4}
+    current_status = _string_or_none(current)
+    candidate_status = _string_or_none(candidate)
+    if priority.get(candidate_status or "", 0) > priority.get(current_status or "", 0):
+        return candidate_status
+    return current_status or candidate_status
 
 
 def _build_prompt(extra_prompt: str | None, filename: str) -> str:

@@ -259,7 +259,7 @@ def test_ocr_client_attaches_source_metadata_to_rows(monkeypatch):
     ]
 
 
-def test_pdf_staff_hint_overrides_generic_all_staff_filename(monkeypatch):
+def test_pdf_staff_hint_expands_compatible_visible_card_name(monkeypatch):
     def fake_post(payload, *, api_key):
         return {
             "model": "fake-model",
@@ -306,7 +306,113 @@ def test_pdf_staff_hint_overrides_generic_all_staff_filename(monkeypatch):
     row = result["daily_rows"][0]
     assert row["name"] == "Au Kin Wai Johnny"
     assert row["ocr_name"] == "Johnny"
+    assert row["source_staff_name_hint"] == "Au Kin Wai Johnny"
+    assert row["name_identity_status"] == "matched_hint"
     assert row["date"] == "2026-06-08"
+
+
+def test_pdf_staff_hint_does_not_override_conflicting_visible_card_name(monkeypatch):
+    def fake_post(payload, *, api_key):
+        return {
+            "model": "fake-model",
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "document_type": "logsheet",
+                                "month_year": "June 2026",
+                                "daily_rows": [
+                                    {
+                                        "name": "Lau Ka Yiu Yo Yo",
+                                        "date": "6",
+                                        "morning_in": "09:16",
+                                        "afternoon_out": "20:15",
+                                    }
+                                ],
+                            }
+                        )
+                    },
+                }
+            ],
+            "usage": {"total_tokens": 10},
+        }
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setattr(openrouter_ocr, "_post_openrouter", fake_post)
+
+    result = openrouter_ocr.ocr_logsheet_with_openrouter(
+        b"fake image",
+        "Oi_timecard_June_2026_All_Staff__page_02__staff_06__card_2.jpg",
+        mime_type="image/jpeg",
+        source_filename="Oi_timecard_June_2026_All_Staff.pdf",
+        source_metadata={
+            "source_type": "pdf_timecard_card",
+            "source_page": 2,
+            "source_staff_index": 6,
+            "source_staff_name_hint": "Lam Wai Ching Jade",
+            "source_card_no": 2,
+        },
+    )
+
+    row = result["daily_rows"][0]
+    assert row["name"] == "Lau Ka Yiu Yo Yo"
+    assert row["ocr_name"] == "Lau Ka Yiu Yo Yo"
+    assert row["source_staff_name_hint"] == "Lam Wai Ching Jade"
+    assert row["name_identity_status"] == "conflict"
+    assert any("姓名衝突" in warning for warning in row["warnings"])
+
+
+def test_pdf_staff_hint_is_reviewable_fallback_when_card_name_is_unreadable(monkeypatch):
+    def fake_post(payload, *, api_key):
+        return {
+            "model": "fake-model",
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "document_type": "logsheet",
+                                "month_year": "June 2026",
+                                "daily_rows": [
+                                    {
+                                        "date": "8",
+                                        "morning_in": "08:25",
+                                        "afternoon_out": "18:30",
+                                    }
+                                ],
+                            }
+                        )
+                    },
+                }
+            ],
+            "usage": {"total_tokens": 10},
+        }
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setattr(openrouter_ocr, "_post_openrouter", fake_post)
+
+    result = openrouter_ocr.ocr_logsheet_with_openrouter(
+        b"fake image",
+        "Oi_timecard_June_2026_All_Staff__page_01__staff_01__card_1.jpg",
+        mime_type="image/jpeg",
+        source_filename="Oi_timecard_June_2026_All_Staff.pdf",
+        source_metadata={
+            "source_type": "pdf_timecard_card",
+            "source_page": 1,
+            "source_staff_index": 1,
+            "source_staff_name_hint": "Au Kin Wai Johnny",
+            "source_card_no": 1,
+        },
+    )
+
+    row = result["daily_rows"][0]
+    assert row["name"] == "Au Kin Wai Johnny"
+    assert "ocr_name" not in row
+    assert row["name_identity_status"] == "hint_fallback"
+    assert any("卡面姓名未能辨識" in warning for warning in row["warnings"])
 
 
 def test_merge_preserves_source_parts_from_multiple_cards():

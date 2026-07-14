@@ -833,7 +833,8 @@ h3 {
 }
 
 .oil-card-item.is-error,
-.oil-card-item.is-no-data {
+.oil-card-item.is-no-data,
+.oil-card-item.is-warning {
   border-left-color: #d97706;
   background: #fffbeb;
 }
@@ -885,7 +886,8 @@ h3 {
 }
 
 .oil-card-item.is-error .oil-card-status,
-.oil-card-item.is-no-data .oil-card-status {
+.oil-card-item.is-no-data .oil-card-status,
+.oil-card-item.is-warning .oil-card-status {
   color: #a34a00;
 }
 
