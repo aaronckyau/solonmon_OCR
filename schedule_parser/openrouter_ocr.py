@@ -226,7 +226,6 @@ def _ocr_logsheet_once_with_openrouter(
         structured,
         source_filename or payload_filename,
         context_hint=prompt,
-        prefer_visible_name=bool((source_metadata or {}).get("source_staff_name_hint")),
     )
     daily_rows = _apply_source_metadata_to_rows(daily_rows, source_metadata)
 
@@ -542,7 +541,25 @@ def _apply_source_metadata_to_rows(
         return rows
     for row in rows:
         staff_name_hint = _string_or_none(metadata.get("source_staff_name_hint"))
-        if staff_name_hint:
+        source_staff_label = _string_or_none(metadata.get("source_staff_label"))
+        source_type = _string_or_none(metadata.get("source_type"))
+        is_roster_labeled_pdf = source_type in {"pdf_timecard_card", "pdf_timecard_pair"}
+        if source_staff_label:
+            row["source_staff_label"] = source_staff_label
+        if is_roster_labeled_pdf:
+            row.pop("ocr_name", None)
+            if staff_name_hint:
+                row["name"] = staff_name_hint
+                row["source_staff_name_hint"] = staff_name_hint
+                row["name_identity_status"] = "roster_label"
+            else:
+                row["name"] = None
+                row["name_identity_status"] = "unresolved_roster_label"
+                _append_identity_warning(
+                    row,
+                    f"PDF 上方標籤 {source_staff_label or '未能辨識'} 未能對應 Excel roster，請從員工名單覆核。",
+                )
+        elif staff_name_hint:
             recognized_name = _string_or_none(row.get("ocr_name") or row.get("name"))
             row["source_staff_name_hint"] = staff_name_hint
             if recognized_name:
@@ -649,7 +666,9 @@ def merge_logsheet_daily_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]
         assigned_staff_name = _string_or_none(row.get("assigned_staff_name"))
         date = _string_or_none(row.get("date"))
         source_filename = _string_or_none(row.get("source_filename")) or ""
-        key = (name or "", date or "", "" if date else f"{source_filename}:{index}")
+        source_part_filename = _string_or_none(row.get("source_part_filename")) or source_filename
+        source_key = "" if name else source_part_filename
+        key = (name or "", date or "", source_key if date else f"{source_part_filename}:{index}")
         if key not in merged:
             merged[key] = {
                 "name": name,
@@ -669,6 +688,8 @@ def merge_logsheet_daily_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]
                 merged[key]["assigned_staff_name"] = assigned_staff_name
             if row.get("source_staff_name_hint"):
                 merged[key]["source_staff_name_hint"] = row["source_staff_name_hint"]
+            if row.get("source_staff_label"):
+                merged[key]["source_staff_label"] = row["source_staff_label"]
             if row.get("name_identity_status"):
                 merged[key]["name_identity_status"] = row["name_identity_status"]
             order.append(key)
@@ -682,6 +703,8 @@ def merge_logsheet_daily_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]
             target["assigned_staff_name"] = assigned_staff_name
         if row.get("source_staff_name_hint") and not target.get("source_staff_name_hint"):
             target["source_staff_name_hint"] = row["source_staff_name_hint"]
+        if row.get("source_staff_label") and not target.get("source_staff_label"):
+            target["source_staff_label"] = row["source_staff_label"]
         identity_status = _stronger_identity_status(
             target.get("name_identity_status"),
             row.get("name_identity_status"),
@@ -738,7 +761,14 @@ def merge_logsheet_daily_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]
 
 
 def _stronger_identity_status(current: Any, candidate: Any) -> str | None:
-    priority = {"matched_hint": 1, "hint_fallback": 2, "conflict": 3, "manual_override": 4}
+    priority = {
+        "matched_hint": 1,
+        "roster_label": 2,
+        "hint_fallback": 3,
+        "conflict": 4,
+        "unresolved_roster_label": 5,
+        "manual_override": 6,
+    }
     current_status = _string_or_none(current)
     candidate_status = _string_or_none(candidate)
     if priority.get(candidate_status or "", 0) > priority.get(current_status or "", 0):
@@ -1035,6 +1065,7 @@ def _source_part_from_row(row: dict[str, Any]) -> dict[str, Any]:
     for key in (
         "source_page",
         "source_staff_index",
+        "source_staff_label",
         "source_staff_name_hint",
         "source_card_no",
         "source_part_filename",

@@ -1072,22 +1072,34 @@ function setPreparedOcrParts(parts) {
   state.ocrPreviewFiles = (parts || []).map((part, index) => {
     const metadata = part.metadata && typeof part.metadata === "object" ? part.metadata : {};
     const hintStaff = String(metadata.source_staff_name_hint || "").trim();
+    const sourceStaffLabel = String(metadata.source_staff_label || "").trim();
+    const sourceType = String(metadata.source_type || "").trim();
+    const isRosterLabeledPdf = ["pdf_timecard_card", "pdf_timecard_pair"].includes(sourceType);
     const previewPath = String(part.preview_path || metadata.source_preview_path || "").trim();
     const mimeType = String(part.mime_type || "").toLowerCase();
     return {
       name: String(part.filename || `timecard-${index + 1}.jpg`),
-      displayName: hintStaff ? `${hintStaff}（PDF 標籤）` : `待配對打卡紙 ${index + 1}`,
+      displayName: hintStaff
+        ? `${hintStaff}（Excel roster）`
+        : sourceStaffLabel
+          ? `${sourceStaffLabel}（未對應 roster）`
+          : `待配對打卡紙 ${index + 1}`,
       type: mimeType,
       previewId: String(part.preview_id || ""),
       previewPath,
       previewUrl: mimeType.startsWith("image/") && previewPath ? apiUrl(previewPath) : "",
       sourceFilename: String(part.source_filename || ""),
       assignedStaff: "",
-      resolvedStaff: "",
+      resolvedStaff: hintStaff,
       visibleCardName: "",
+      sourceStaffLabel,
       hintStaff,
-      identityStatus: "pending",
-      originalIdentityStatus: "pending",
+      identityStatus: isRosterLabeledPdf
+        ? (hintStaff ? "roster_label" : "unresolved_roster_label")
+        : "pending",
+      originalIdentityStatus: isRosterLabeledPdf
+        ? (hintStaff ? "roster_label" : "unresolved_roster_label")
+        : "pending",
       ocrDailyRows: [],
       metadata,
       preprocessing: part.preprocessing || {},
@@ -1108,26 +1120,28 @@ function setPreparedOcrParts(parts) {
 
 function updateOilCardIdentity(file, rows) {
   const identityRows = (rows || []).filter((row) => row && typeof row === "object");
-  const primary = identityRows.find((row) => row.name_identity_status === "conflict")
-    || identityRows.find((row) => row.name_identity_status === "hint_fallback")
+  const primary = identityRows.find((row) => row.name_identity_status === "unresolved_roster_label")
     || identityRows[0]
     || {};
-  const identityStatus = String(primary.name_identity_status || "").trim();
-  const visibleCardName = String(primary.ocr_name || "").trim();
-  const resolvedStaff = String(primary.name || "").trim();
+  const identityStatus = String(
+    primary.name_identity_status || file.originalIdentityStatus || file.identityStatus || "",
+  ).trim();
   const hintStaff = String(primary.source_staff_name_hint || file.hintStaff || "").trim();
+  const sourceStaffLabel = String(primary.source_staff_label || file.sourceStaffLabel || "").trim();
+  const resolvedStaff = identityStatus === "unresolved_roster_label"
+    ? ""
+    : hintStaff || String(primary.name || "").trim();
 
   file.identityStatus = identityStatus || (resolvedStaff ? "recognized" : "unresolved");
   file.originalIdentityStatus = file.identityStatus;
-  file.visibleCardName = visibleCardName;
-  file.resolvedStaff = identityStatus === "conflict" ? "" : resolvedStaff;
+  file.visibleCardName = "";
+  file.resolvedStaff = resolvedStaff;
+  file.sourceStaffLabel = sourceStaffLabel;
   file.hintStaff = hintStaff;
-  if (identityStatus === "conflict") {
-    file.displayName = `${visibleCardName || resolvedStaff || "姓名未辨識"}（需覆核）`;
-  } else if (identityStatus === "hint_fallback") {
-    file.displayName = `${hintStaff || resolvedStaff || "姓名未辨識"}（標籤暫配）`;
+  if (identityStatus === "unresolved_roster_label") {
+    file.displayName = `${sourceStaffLabel || "上方標籤未辨識"}（需從 roster 覆核）`;
   } else {
-    file.displayName = resolvedStaff || visibleCardName || hintStaff || file.displayName;
+    file.displayName = resolvedStaff ? `${resolvedStaff}（Excel roster）` : file.displayName;
   }
 }
 
@@ -1181,7 +1195,7 @@ function oilCardSourceLabel(file) {
 
 function oilCardStatusClass(file) {
   if (file.identityStatus === "manual_override") return "is-done";
-  if (file.identityStatus === "conflict" || file.identityStatus === "hint_fallback") return "is-warning";
+  if (["conflict", "hint_fallback", "unresolved_roster_label"].includes(file.identityStatus)) return "is-warning";
   if (file.ocrStatus === "done") return "is-done";
   if (file.ocrStatus === "error") return "is-error";
   if (file.ocrStatus === "no-data") return "is-no-data";
@@ -1191,6 +1205,8 @@ function oilCardStatusClass(file) {
 function oilCardStatusLabel(file) {
   if (file.ocrStatus === "running") return "OCR 中";
   if (file.identityStatus === "manual_override") return "已手動配對";
+  if (file.identityStatus === "roster_label") return file.ocrStatus === "done" ? `${file.ocrRows} 筆` : "roster 已配對";
+  if (file.identityStatus === "unresolved_roster_label") return "標籤需覆核";
   if (file.identityStatus === "conflict") return "姓名衝突";
   if (file.identityStatus === "hint_fallback") return "姓名需覆核";
   if (file.ocrStatus === "done") return `${file.ocrRows} 筆`;
@@ -1224,6 +1240,12 @@ function renderOilCardPreview(file) {
 
 function oilCardIdentityLabel(file) {
   if (!file) return "";
+  if (file.identityStatus === "roster_label") {
+    return `Excel roster：${file.resolvedStaff || file.hintStaff}（按上方標籤）`;
+  }
+  if (file.identityStatus === "unresolved_roster_label") {
+    return `上方標籤「${file.sourceStaffLabel || "未能辨識"}」未能對應 Excel roster`;
+  }
   if (file.identityStatus === "conflict") {
     return `卡面：${file.visibleCardName || "未辨識"}；PDF：${file.hintStaff || "未提供"}`;
   }
@@ -4719,8 +4741,9 @@ function mergeOcrDailyRows(rows) {
   rows.forEach((row, index) => {
     const name = display(row.name).trim();
     const date = display(row.date).trim();
-    const fallbackKey = `${display(row.source_filename)}:${index}`;
-    const key = name || date ? `${name}||${date}` : fallbackKey;
+    const sourcePart = display(row.source_part_filename || row.source_filename).trim();
+    const fallbackKey = `${sourcePart}:${index}`;
+    const key = name ? `${name}||${date}` : date ? `${sourcePart}||${date}` : fallbackKey;
     if (!merged.has(key)) {
       merged.set(key, {
         name: name || null,
@@ -4735,6 +4758,7 @@ function mergeOcrDailyRows(rows) {
         source_preview_paths: [],
         source_parts: [],
         ocr_name: row.ocr_name || "",
+        source_staff_label: row.source_staff_label || "",
         source_staff_name_hint: row.source_staff_name_hint || "",
         name_identity_status: row.name_identity_status || "",
         original_name_identity_status: row.original_name_identity_status || "",
@@ -4747,6 +4771,7 @@ function mergeOcrDailyRows(rows) {
     const target = merged.get(key);
     target.name = target.name || name || null;
     target.ocr_name = target.ocr_name || row.ocr_name || "";
+    target.source_staff_label = target.source_staff_label || row.source_staff_label || "";
     target.source_staff_name_hint = target.source_staff_name_hint || row.source_staff_name_hint || "";
     target.name_identity_status = strongerNameIdentityStatus(
       target.name_identity_status,
@@ -4785,7 +4810,14 @@ function mergeOcrDailyRows(rows) {
 }
 
 function strongerNameIdentityStatus(current, candidate) {
-  const priority = { matched_hint: 1, hint_fallback: 2, conflict: 3, manual_override: 4 };
+  const priority = {
+    matched_hint: 1,
+    roster_label: 2,
+    hint_fallback: 3,
+    conflict: 4,
+    unresolved_roster_label: 5,
+    manual_override: 6,
+  };
   const currentStatus = String(current || "").trim();
   const candidateStatus = String(candidate || "").trim();
   return (priority[candidateStatus] || 0) > (priority[currentStatus] || 0)
@@ -4813,7 +4845,15 @@ function sourcePartsFromRow(row) {
     });
   }
   const ownPart = {};
-  ["source_page", "source_card_no", "source_part_filename", "source_part_label", "source_preview_path"].forEach((key) => {
+  [
+    "source_page",
+    "source_card_no",
+    "source_part_filename",
+    "source_part_label",
+    "source_preview_path",
+    "source_staff_label",
+    "source_staff_name_hint",
+  ].forEach((key) => {
     if (row[key] !== null && row[key] !== undefined && row[key] !== "") ownPart[key] = row[key];
   });
   if (Object.keys(ownPart).length) parts.push(ownPart);

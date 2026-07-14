@@ -401,29 +401,37 @@ def _ocr_prepared_sources(
 
 
 def _ocr_prompt_for_source(prompt: str | None, metadata: dict[str, Any]) -> str | None:
-    staff_name_hint = str(metadata.get("source_staff_name_hint") or "").strip()
-    if not staff_name_hint:
+    source_type = str(metadata.get("source_type") or "").strip()
+    if source_type not in {"pdf_timecard_card", "pdf_timecard_pair"}:
         return prompt
+    staff_name_hint = str(metadata.get("source_staff_name_hint") or "").strip()
+    source_staff_label = str(metadata.get("source_staff_label") or "").strip()
     card_no = metadata.get("source_card_no")
-    if card_no:
+    if staff_name_hint and card_no:
         instruction = (
             "Oil Street PDF single-card instruction:\n"
             f"- This image contains only Card {card_no}.\n"
-            f"- The PDF positional label suggests {staff_name_hint}, but that hint may be wrong.\n"
-            "- Independently transcribe the name visibly written in the card's NAME field.\n"
-            "- Do not copy the PDF positional label when the visible card name differs.\n"
-            "- If the visible card name is blank or unreadable, return null for the name.\n"
+            f"- The printed label above this card is the authoritative Excel roster name: {staff_name_hint}.\n"
+            "- Ignore any handwritten name inside the card. It is not an identity source.\n"
+            f"- Return the row-level name exactly as {staff_name_hint}.\n"
             f"- Extract every worked day visible on Card {card_no}; do not summarize or omit sparse rows.\n"
             "- Read each stamped time from its own horizontal date row."
         )
-    else:
+    elif staff_name_hint:
         instruction = (
             "Oil Street PDF card-pair instruction:\n"
-            f"- The PDF positional label suggests {staff_name_hint}, but that hint may be wrong.\n"
-            "- Independently transcribe the name visibly written on each card.\n"
-            "- Do not copy the PDF positional label when either visible card name differs.\n"
-            "- If a visible card name is blank or unreadable, return null for that name.\n"
+            f"- The printed label above these cards is the authoritative Excel roster name: {staff_name_hint}.\n"
+            "- Ignore any handwritten name inside either card. It is not an identity source.\n"
+            f"- Return the row-level name exactly as {staff_name_hint}.\n"
             "- Extract every worked day from both Card 1 and Card 2; do not summarize or omit sparse rows."
+        )
+    else:
+        instruction = (
+            "Oil Street PDF roster-review instruction:\n"
+            f"- The printed label above this card ({source_staff_label or 'unreadable'}) did not match the Excel roster.\n"
+            "- Ignore any handwritten name inside the card. It is not an identity source.\n"
+            "- Return null for every row-level name and extract only dates and stamped times.\n"
+            "- Do not invent, correct, or add a staff name. The user will choose from the Excel roster."
         )
     return f"{prompt}\n\n{instruction}".strip() if prompt else instruction
 

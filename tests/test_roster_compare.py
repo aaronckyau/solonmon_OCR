@@ -106,32 +106,31 @@ def test_preserves_generated_card_preview_metadata_in_comparison_row():
     assert matched["source_parts"][0]["source_preview_path"] == preview_path
 
 
-def test_conflicting_card_name_uses_visible_name_and_requires_review():
+def test_unresolved_pdf_label_does_not_create_a_new_roster_name():
     result = compare_schedule_to_ocr(
         sample_schedule(),
         [
             {
-                "name": "Cheng Nuo Isla",
-                "ocr_name": "Cheng Nuo Isla",
+                "name": None,
                 "date": "2025-08-20",
                 "in": "09:45",
                 "out": "20:15",
-                "source_staff_name_hint": "Chan Hiu Ue",
-                "name_identity_status": "conflict",
+                "source_staff_label": "Unknown Printed Label",
+                "name_identity_status": "unresolved_roster_label",
             }
         ],
     )
 
-    matched = next(row for row in result["rows"] if row["date"] == "2025-08-20")
-    assert matched["staff_name"] == "Cheng Nuo Isla"
-    assert matched["source_staff_name_hint"] == "Chan Hiu Ue"
-    assert matched["name_identity_status"] == "conflict"
-    assert "Name Check" in matched["flags"]
-    assert "Cheng Nuo Isla" in matched["notes"]
-    assert "Chan Hiu Ue" in matched["notes"]
+    unmatched = result["rows"][0]
+    assert unmatched["staff_name"] == ""
+    assert unmatched["source_staff_label"] == "Unknown Printed Label"
+    assert unmatched["name_identity_status"] == "unresolved_roster_label"
+    assert unmatched["status"] == "Name Not Matched"
+    assert "Name Check" in unmatched["flags"]
+    assert "Excel roster" in unmatched["notes"]
 
 
-def test_manual_assignment_resolves_card_name_conflict():
+def test_manual_assignment_resolves_unmatched_pdf_label():
     result = compare_schedule_to_ocr(
         sample_schedule(),
         [

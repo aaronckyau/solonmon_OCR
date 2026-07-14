@@ -8,10 +8,39 @@ import pytest
 
 from schedule_parser.image_enhancement import (
     OUTPUT_MIME_TYPE,
+    _match_staff_label,
     _timecard_column_crop_bounds,
     prepare_ocr_image,
     prepare_oil_street_timecard_sources,
 )
+
+
+OIL_JUNE_STAFF_NAMES = [
+    "Au Kin Wai Johnny",
+    "Chui Chung Yan Nicole",
+    "Ching Yeuk Ling Alice",
+    "Ko Wai Yin",
+    "Kwong Wai Thomas",
+    "Lam Wai Ching Jade",
+    "Lau Ka Yiu Yo Yo",
+    "Law Suet Shan",
+    "Leung Ah Woon Alvina",
+    "Ma Pak Yin Momo",
+    "Lo Siu Ho Heaven",
+    "Poon Wai Ching Crystal",
+    "Ma Pui Ying Joy",
+    "Pan Hoi Yin William",
+    "Tse Bing Ying Samantha",
+    "Woo Hiu Ki Yuki",
+    "Kan Lok Chi Gigi",
+    "Wong Ching Yuk Selene",
+    "Wong Pak Him Samuel",
+    "Lam Lok Yi Sum",
+    "Mok Ka Man Idy",
+    "Leung Yuen Yi Alyria",
+    "Wong Pui Yin Olivia",
+    "Lau Yuet To Alice",
+]
 
 
 def _sample_png_bytes(size=(320, 520)) -> bytes:
@@ -121,6 +150,7 @@ def test_prepare_oil_street_all_staff_pdf_splits_one_source_per_card():
         sample.name,
         mime_type="application/pdf",
         enabled=False,
+        staff_names=OIL_JUNE_STAFF_NAMES,
     )
 
     assert len(sources) == 50
@@ -134,6 +164,8 @@ def test_prepare_oil_street_all_staff_pdf_splits_one_source_per_card():
     ]
     assert sources[0].metadata["source_staff_name_hint"].replace(" ", "") == "AuKinWaiJohnny"
     assert sources[-1].metadata["source_staff_name_hint"].replace(" ", "") == "LauYuetToAlice"
+    assert all(source.metadata["source_staff_name_hint"] in OIL_JUNE_STAFF_NAMES for source in sources)
+    assert all(source.metadata["source_staff_label"] for source in sources)
     assert [source.metadata["source_card_no"] for source in sources[:4]] == [1, 2, 1, 2]
     assert sources[0].filename.endswith("__card_1.jpg")
     assert sources[1].filename.endswith("__card_2.jpg")
@@ -165,6 +197,7 @@ def test_prepare_oil_street_pdf_cards_are_large_enough_for_stamp_ocr():
         sample.name,
         mime_type="application/pdf",
         enabled=True,
+        staff_names=OIL_JUNE_STAFF_NAMES,
     )
     source = next(
         item
@@ -176,6 +209,11 @@ def test_prepare_oil_street_pdf_cards_are_large_enough_for_stamp_ocr():
     with Image.open(BytesIO(source.file_bytes)) as image:
         assert image.width >= 800
         assert image.height >= 2000
+
+
+def test_match_staff_label_only_returns_canonical_roster_name():
+    assert _match_staff_label("Lau Ka Y iu Y o Y o", OIL_JUNE_STAFF_NAMES) == "Lau Ka Yiu Yo Yo"
+    assert _match_staff_label("Brand New OCR Name", OIL_JUNE_STAFF_NAMES) is None
 
 
 def test_timecard_column_crop_bounds_follow_irregular_card_positions():

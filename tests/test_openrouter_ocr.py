@@ -178,6 +178,32 @@ def test_merge_preserves_explicit_out_without_in():
     assert rows[0]["out"] == "18:46"
 
 
+def test_merge_keeps_unmatched_roster_labels_on_separate_cards():
+    rows = openrouter_ocr.merge_logsheet_daily_rows(
+        [
+            {
+                "name": None,
+                "date": "2026-06-08",
+                "in": "09:00",
+                "source_filename": "all-staff.pdf",
+                "source_part_filename": "page-1-staff-1-card-1.jpg",
+                "source_staff_label": "Unknown One",
+            },
+            {
+                "name": None,
+                "date": "2026-06-08",
+                "in": "10:00",
+                "source_filename": "all-staff.pdf",
+                "source_part_filename": "page-1-staff-2-card-1.jpg",
+                "source_staff_label": "Unknown Two",
+            },
+        ]
+    )
+
+    assert len(rows) == 2
+    assert {row["source_staff_label"] for row in rows} == {"Unknown One", "Unknown Two"}
+
+
 def test_merge_preserves_confirmed_staff_assignment_fields():
     rows = openrouter_ocr.merge_logsheet_daily_rows(
         [
@@ -259,7 +285,7 @@ def test_ocr_client_attaches_source_metadata_to_rows(monkeypatch):
     ]
 
 
-def test_pdf_staff_hint_expands_compatible_visible_card_name(monkeypatch):
+def test_pdf_staff_label_uses_roster_name_and_discards_handwritten_name(monkeypatch):
     def fake_post(payload, *, api_key):
         return {
             "model": "fake-model",
@@ -305,13 +331,13 @@ def test_pdf_staff_hint_expands_compatible_visible_card_name(monkeypatch):
 
     row = result["daily_rows"][0]
     assert row["name"] == "Au Kin Wai Johnny"
-    assert row["ocr_name"] == "Johnny"
+    assert "ocr_name" not in row
     assert row["source_staff_name_hint"] == "Au Kin Wai Johnny"
-    assert row["name_identity_status"] == "matched_hint"
+    assert row["name_identity_status"] == "roster_label"
     assert row["date"] == "2026-06-08"
 
 
-def test_pdf_staff_hint_does_not_override_conflicting_visible_card_name(monkeypatch):
+def test_pdf_staff_label_overrides_different_handwritten_card_name(monkeypatch):
     def fake_post(payload, *, api_key):
         return {
             "model": "fake-model",
@@ -357,14 +383,14 @@ def test_pdf_staff_hint_does_not_override_conflicting_visible_card_name(monkeypa
     )
 
     row = result["daily_rows"][0]
-    assert row["name"] == "Lau Ka Yiu Yo Yo"
-    assert row["ocr_name"] == "Lau Ka Yiu Yo Yo"
+    assert row["name"] == "Lam Wai Ching Jade"
+    assert "ocr_name" not in row
     assert row["source_staff_name_hint"] == "Lam Wai Ching Jade"
-    assert row["name_identity_status"] == "conflict"
-    assert any("姓名衝突" in warning for warning in row["warnings"])
+    assert row["name_identity_status"] == "roster_label"
+    assert not any("Lau Ka Yiu Yo Yo" in warning for warning in row["warnings"])
 
 
-def test_pdf_staff_hint_is_reviewable_fallback_when_card_name_is_unreadable(monkeypatch):
+def test_pdf_staff_label_does_not_require_handwritten_name(monkeypatch):
     def fake_post(payload, *, api_key):
         return {
             "model": "fake-model",
@@ -411,8 +437,61 @@ def test_pdf_staff_hint_is_reviewable_fallback_when_card_name_is_unreadable(monk
     row = result["daily_rows"][0]
     assert row["name"] == "Au Kin Wai Johnny"
     assert "ocr_name" not in row
-    assert row["name_identity_status"] == "hint_fallback"
-    assert any("卡面姓名未能辨識" in warning for warning in row["warnings"])
+    assert row["name_identity_status"] == "roster_label"
+    assert not row["warnings"]
+
+
+def test_unmatched_pdf_label_rejects_handwritten_name_and_requires_roster_review(monkeypatch):
+    def fake_post(payload, *, api_key):
+        return {
+            "model": "fake-model",
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "document_type": "logsheet",
+                                "month_year": "June 2026",
+                                "daily_rows": [
+                                    {
+                                        "name": "Brand New OCR Name",
+                                        "date": "8",
+                                        "morning_in": "08:25",
+                                        "afternoon_out": "18:30",
+                                    }
+                                ],
+                            }
+                        )
+                    },
+                }
+            ],
+            "usage": {"total_tokens": 10},
+        }
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setattr(openrouter_ocr, "_post_openrouter", fake_post)
+
+    result = openrouter_ocr.ocr_logsheet_with_openrouter(
+        b"fake image",
+        "Oi_timecard_June_2026_All_Staff__page_01__staff_01__card_1.jpg",
+        mime_type="image/jpeg",
+        source_filename="Oi_timecard_June_2026_All_Staff.pdf",
+        source_metadata={
+            "source_type": "pdf_timecard_card",
+            "source_page": 1,
+            "source_staff_index": 1,
+            "source_staff_label": "Unknown Printed Label",
+            "source_card_no": 1,
+        },
+    )
+
+    row = result["daily_rows"][0]
+    assert row["name"] is None
+    assert "ocr_name" not in row
+    assert row["source_staff_label"] == "Unknown Printed Label"
+    assert row["name_identity_status"] == "unresolved_roster_label"
+    assert any("Excel roster" in warning for warning in row["warnings"])
 
 
 def test_merge_preserves_source_parts_from_multiple_cards():

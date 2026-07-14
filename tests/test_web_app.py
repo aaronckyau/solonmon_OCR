@@ -899,9 +899,9 @@ def test_oil_street_all_staff_pdf_uses_roster_names_for_individual_cards(monkeyp
     assert [call[2]["source_card_no"] for call in calls[:4]] == [1, 2, 1, 2]
     assert all(call[2]["source_staff_name_hint"] in call[1] for call in calls)
     assert all(f"Card {call[2]['source_card_no']}" in call[1] for call in calls)
-    assert all("hint may be wrong" in call[1] for call in calls)
-    assert all("Independently transcribe the name" in call[1] for call in calls)
-    assert all("Return the row-level name exactly as" not in call[1] for call in calls)
+    assert all("authoritative Excel roster name" in call[1] for call in calls)
+    assert all("Ignore any handwritten name" in call[1] for call in calls)
+    assert all("Return the row-level name exactly as" in call[1] for call in calls)
 
 
 def test_compare_roster_success_returns_summary():

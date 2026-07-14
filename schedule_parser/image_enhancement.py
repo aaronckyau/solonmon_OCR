@@ -33,6 +33,12 @@ class PreparedOcrSource:
     metadata: dict[str, Any]
 
 
+@dataclass(slots=True)
+class PdfStaffLabel:
+    raw_label: str
+    roster_name: str | None
+
+
 def prepare_ocr_image(
     file_bytes: bytes,
     filename: str,
@@ -304,7 +310,8 @@ def _prepare_oil_street_pdf_timecard_sources(
             reference_card_no,
         )
 
-        for staff_index, staff_name_hint in enumerate(labels, start=1):
+        for staff_index, staff_label in enumerate(labels, start=1):
+            staff_name_hint = staff_label.roster_name
             for card_no, row_image in sorted(row_images.items()):
                 card, crop_box = _crop_timecard_from_row(
                     row_image,
@@ -332,7 +339,9 @@ def _prepare_oil_street_pdf_timecard_sources(
                         "source_part_filename": part_filename,
                         "source_page": page_number,
                         "source_staff_index": staff_index,
+                        "source_staff_label": staff_label.raw_label,
                         "source_staff_name_hint": staff_name_hint,
+                        "source_staff_name_resolved": bool(staff_name_hint),
                         "source_card_no": card_no,
                         "source_crop_box": crop_box,
                         "source_crop_size": crop_size,
@@ -350,7 +359,9 @@ def _prepare_oil_street_pdf_timecard_sources(
                             "source_type": "pdf_timecard_card",
                             "source_page": page_number,
                             "source_staff_index": staff_index,
+                            "source_staff_label": staff_label.raw_label,
                             "source_staff_name_hint": staff_name_hint,
+                            "source_staff_name_resolved": bool(staff_name_hint),
                             "source_card_no": card_no,
                             "source_part_filename": part_filename,
                             "source_part_label": f"page {page_number}, staff {staff_index}, card {card_no}",
@@ -367,7 +378,7 @@ def _prepare_oil_street_pdf_timecard_sources(
     return sources
 
 
-def _pdf_page_staff_labels(page: Any, staff_names: list[str]) -> list[str]:
+def _pdf_page_staff_labels(page: Any, staff_names: list[str]) -> list[PdfStaffLabel]:
     fragments: list[dict[str, Any]] = []
 
     def collect(text, current_matrix, text_matrix, _font, font_size) -> None:
@@ -400,7 +411,7 @@ def _pdf_page_staff_labels(page: Any, staff_names: list[str]) -> list[str]:
             bands.append(band)
         band["fragments"].append(fragment)
 
-    candidates: list[list[str]] = []
+    candidates: list[list[PdfStaffLabel]] = []
     for band in bands:
         groups: list[dict[str, Any]] = []
         for fragment in sorted(band["fragments"], key=lambda item: (item["x"], item["line_y"])):
@@ -413,16 +424,21 @@ def _pdf_page_staff_labels(page: Any, staff_names: list[str]) -> list[str]:
             " ".join(item["text"] for item in sorted(group["fragments"], key=lambda item: item["line_y"]))
             for group in sorted(groups, key=lambda item: item["x"])
         ]
-        candidates.append([_match_staff_label(label, staff_names) for label in labels])
+        candidates.append(
+            [
+                PdfStaffLabel(raw_label=label, roster_name=_match_staff_label(label, staff_names))
+                for label in labels
+            ]
+        )
     return max(candidates, key=len, default=[])
 
 
-def _match_staff_label(label: str, staff_names: list[str]) -> str:
+def _match_staff_label(label: str, staff_names: list[str]) -> str | None:
     normalized_label = _normalized_name(label)
     for staff_name in staff_names:
         if _normalized_name(staff_name) == normalized_label:
             return staff_name
-    return label
+    return None
 
 
 def _normalized_name(value: str) -> str:

@@ -247,6 +247,7 @@ def _normalize_actual_row(row: dict[str, Any], schedule_dates: set[str]) -> dict
         "source_preview_path": _clean_text(row.get("source_preview_path")),
         "source_preview_paths": [str(item) for item in row.get("source_preview_paths") or [] if item],
         "source_parts": [dict(item) for item in row.get("source_parts") or [] if isinstance(item, dict)],
+        "source_staff_label": _clean_text(row.get("source_staff_label")),
         "source_staff_name_hint": _clean_text(row.get("source_staff_name_hint")),
         "name_identity_status": _clean_text(row.get("name_identity_status")),
         "all_times": all_times,
@@ -347,6 +348,8 @@ def _merge_actual(target: dict[str, Any], source: dict[str, Any]) -> None:
             target["warnings"].append(warning)
     if source.get("source_staff_name_hint") and not target.get("source_staff_name_hint"):
         target["source_staff_name_hint"] = source["source_staff_name_hint"]
+    if source.get("source_staff_label") and not target.get("source_staff_label"):
+        target["source_staff_label"] = source["source_staff_label"]
     target["name_identity_status"] = _stronger_identity_status(
         target.get("name_identity_status"),
         source.get("name_identity_status"),
@@ -375,6 +378,7 @@ def _compare_entry(
         "source_preview_path": actual.get("source_preview_path", "") if actual else "",
         "source_preview_paths": actual.get("source_preview_paths", []) if actual else [],
         "source_parts": actual.get("source_parts", []) if actual else [],
+        "source_staff_label": actual.get("source_staff_label", "") if actual else "",
         "source_staff_name_hint": actual.get("source_staff_name_hint", "") if actual else "",
         "name_identity_status": actual.get("name_identity_status", "") if actual else "",
         "name_match_score": actual.get("match_score", "") if actual else "",
@@ -509,6 +513,7 @@ def _unscheduled_row(key: tuple[str, str], actual: dict[str, Any]) -> dict[str, 
         "source_preview_path": actual.get("source_preview_path", ""),
         "source_preview_paths": actual.get("source_preview_paths", []),
         "source_parts": actual.get("source_parts", []),
+        "source_staff_label": actual.get("source_staff_label", ""),
         "source_staff_name_hint": actual.get("source_staff_name_hint", ""),
         "name_identity_status": actual.get("name_identity_status", ""),
         "name_match_score": actual.get("match_score", ""),
@@ -555,6 +560,7 @@ def _unmatched_actual_row(actual: dict[str, Any]) -> dict[str, Any]:
         "source_preview_path": actual.get("source_preview_path", ""),
         "source_preview_paths": actual.get("source_preview_paths", []),
         "source_parts": actual.get("source_parts", []),
+        "source_staff_label": actual.get("source_staff_label", ""),
         "source_staff_name_hint": actual.get("source_staff_name_hint", ""),
         "name_identity_status": actual.get("name_identity_status", ""),
         "name_match_score": actual.get("match_score", ""),
@@ -579,7 +585,7 @@ def _needs_name_review(actual: dict[str, Any]) -> bool:
     score = actual.get("match_score")
     low_confidence = isinstance(score, (int, float)) and score < LOW_CONFIDENCE_NAME_SCORE
     return bool(
-        actual.get("name_identity_status") in {"conflict", "hint_fallback"}
+        actual.get("name_identity_status") in {"conflict", "hint_fallback", "unresolved_roster_label"}
         or actual.get("ambiguous_match")
         or low_confidence
     )
@@ -589,6 +595,9 @@ def _identity_review_note(actual: dict[str, Any]) -> str:
     status = actual.get("name_identity_status")
     visible_name = actual.get("ocr_name") or "未能辨識"
     hint = actual.get("source_staff_name_hint") or "未提供"
+    source_label = actual.get("source_staff_label") or "未能辨識"
+    if status == "unresolved_roster_label":
+        return f"PDF 上方標籤 {source_label} 未能對應 Excel roster，請從員工名單覆核。"
     if status == "conflict":
         return f"姓名衝突：卡面辨識為 {visible_name}；PDF 標籤為 {hint}，請覆核。"
     if status == "hint_fallback":
@@ -597,7 +606,14 @@ def _identity_review_note(actual: dict[str, Any]) -> str:
 
 
 def _stronger_identity_status(current: Any, candidate: Any) -> str:
-    priority = {"matched_hint": 1, "hint_fallback": 2, "conflict": 3, "manual_override": 4}
+    priority = {
+        "matched_hint": 1,
+        "roster_label": 2,
+        "hint_fallback": 3,
+        "conflict": 4,
+        "unresolved_roster_label": 5,
+        "manual_override": 6,
+    }
     current_status = _clean_text(current)
     candidate_status = _clean_text(candidate)
     if priority.get(candidate_status, 0) > priority.get(current_status, 0):
