@@ -249,6 +249,8 @@ def _normalize_actual_row(row: dict[str, Any], schedule_dates: set[str]) -> dict
         "source_parts": [dict(item) for item in row.get("source_parts") or [] if isinstance(item, dict)],
         "source_staff_label": _clean_text(row.get("source_staff_label")),
         "source_staff_name_hint": _clean_text(row.get("source_staff_name_hint")),
+        "source_row_index": row.get("source_row_index"),
+        "date_identity_status": _clean_text(row.get("date_identity_status")),
         "name_identity_status": _clean_text(row.get("name_identity_status")),
         "all_times": all_times,
         "warnings": [str(item) for item in row.get("warnings") or [] if item],
@@ -350,6 +352,10 @@ def _merge_actual(target: dict[str, Any], source: dict[str, Any]) -> None:
         target["source_staff_name_hint"] = source["source_staff_name_hint"]
     if source.get("source_staff_label") and not target.get("source_staff_label"):
         target["source_staff_label"] = source["source_staff_label"]
+    if source.get("source_row_index") is not None and target.get("source_row_index") is None:
+        target["source_row_index"] = source["source_row_index"]
+    if source.get("date_identity_status") and not target.get("date_identity_status"):
+        target["date_identity_status"] = source["date_identity_status"]
     target["name_identity_status"] = _stronger_identity_status(
         target.get("name_identity_status"),
         source.get("name_identity_status"),
@@ -380,6 +386,8 @@ def _compare_entry(
         "source_parts": actual.get("source_parts", []) if actual else [],
         "source_staff_label": actual.get("source_staff_label", "") if actual else "",
         "source_staff_name_hint": actual.get("source_staff_name_hint", "") if actual else "",
+        "source_row_index": actual.get("source_row_index", "") if actual else "",
+        "date_identity_status": actual.get("date_identity_status", "") if actual else "",
         "name_identity_status": actual.get("name_identity_status", "") if actual else "",
         "name_match_score": actual.get("match_score", "") if actual else "",
         "name_match_type": actual.get("match_type", "") if actual else "",
@@ -515,6 +523,8 @@ def _unscheduled_row(key: tuple[str, str], actual: dict[str, Any]) -> dict[str, 
         "source_parts": actual.get("source_parts", []),
         "source_staff_label": actual.get("source_staff_label", ""),
         "source_staff_name_hint": actual.get("source_staff_name_hint", ""),
+        "source_row_index": actual.get("source_row_index", ""),
+        "date_identity_status": actual.get("date_identity_status", ""),
         "name_identity_status": actual.get("name_identity_status", ""),
         "name_match_score": actual.get("match_score", ""),
         "name_match_type": actual.get("match_type", ""),
@@ -538,6 +548,10 @@ def _unmatched_actual_row(actual: dict[str, Any]) -> dict[str, Any]:
     status = "Date Not Matched" if actual.get("staff_name") and not actual.get("date") else "Name Not Matched"
     note = "OCR 日期無法對齊到已解析 roster。" if status == "Date Not Matched" else "OCR 員工姓名無法配對到已解析 roster。"
     identity_note = _identity_review_note(actual)
+    warning_note = next((str(item) for item in actual.get("warnings") or [] if item), "")
+    flags = ["Name Check"] if status == "Name Not Matched" or _needs_name_review(actual) else []
+    if status == "Date Not Matched":
+        flags.append("Date Check")
     return {
         "staff_name": actual.get("staff_name", ""),
         "staff_id": actual.get("staff_id", ""),
@@ -562,6 +576,8 @@ def _unmatched_actual_row(actual: dict[str, Any]) -> dict[str, Any]:
         "source_parts": actual.get("source_parts", []),
         "source_staff_label": actual.get("source_staff_label", ""),
         "source_staff_name_hint": actual.get("source_staff_name_hint", ""),
+        "source_row_index": actual.get("source_row_index", ""),
+        "date_identity_status": actual.get("date_identity_status", ""),
         "name_identity_status": actual.get("name_identity_status", ""),
         "name_match_score": actual.get("match_score", ""),
         "name_match_type": actual.get("match_type", ""),
@@ -574,8 +590,8 @@ def _unmatched_actual_row(actual: dict[str, Any]) -> dict[str, Any]:
         "raw_overtime_minutes": 0,
         "overtime_minutes": 0,
         "status": status,
-        "flags": ["Name Check"] if status == "Name Not Matched" or _needs_name_review(actual) else [],
-        "notes": identity_note or note,
+        "flags": flags,
+        "notes": identity_note or warning_note or note,
         "has_schedule": False,
         "has_actual": True,
     }

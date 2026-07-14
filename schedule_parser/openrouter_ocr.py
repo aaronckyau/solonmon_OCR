@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from calendar import month_name, monthrange
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from io import BytesIO
 import json
@@ -120,6 +121,13 @@ CARD_FIELD_NAMES = (
     "sheet_no",
     "part",
 )
+ROW_INDEX_FIELD_NAMES = (
+    "row_index",
+    "physical_row_index",
+    "table_row_index",
+    "row_number",
+    "row_no",
+)
 MONTHS = {
     "jan": 1,
     "january": 1,
@@ -226,6 +234,7 @@ def _ocr_logsheet_once_with_openrouter(
         structured,
         source_filename or payload_filename,
         context_hint=prompt,
+        source_card_no=(source_metadata or {}).get("source_card_no"),
     )
     daily_rows = _apply_source_metadata_to_rows(daily_rows, source_metadata)
 
@@ -490,6 +499,7 @@ def normalize_logsheet_daily_rows(
     *,
     context_hint: str | None = None,
     prefer_visible_name: bool = False,
+    source_card_no: Any = None,
 ) -> list[dict[str, Any]]:
     if not isinstance(structured, (dict, list)):
         return []
@@ -497,6 +507,7 @@ def normalize_logsheet_daily_rows(
     filename_name_hint = _infer_staff_name_from_filename(source_filename)
     structured_name_hint = _extract_name_hint(structured)
     year_month = _extract_year_month_hint(structured, source_filename, context_hint)
+    metadata_card_no = _normalize_card_no(source_card_no)
     keep_visible_rows_without_times = _is_d_and_g_context(context_hint)
     rows: list[dict[str, Any]] = []
     for item in _candidate_logsheet_rows(structured):
@@ -507,19 +518,34 @@ def normalize_logsheet_daily_rows(
         if not times and not (keep_visible_rows_without_times and ocr_name_hint):
             continue
         row_name = ocr_name_hint if prefer_visible_name else filename_name_hint or ocr_name_hint
-        card_no = _normalize_card_no(_first_present(item, CARD_FIELD_NAMES))
+        card_no = metadata_card_no or _normalize_card_no(_first_present(item, CARD_FIELD_NAMES))
+        row_index = _normalize_timecard_row_index(_first_present(item, ROW_INDEX_FIELD_NAMES), card_no)
+        raw_date = _normalize_date(_first_present(item, DATE_FIELD_NAMES), year_month)
+        resolved_date, date_identity_status, date_warning = _resolve_timecard_date(
+            raw_date,
+            year_month,
+            card_no,
+            row_index,
+        )
+        warnings = list(item.get("warnings")) if isinstance(item.get("warnings"), list) else []
+        if date_warning and date_warning not in warnings:
+            warnings.append(date_warning)
         row = {
             "name": row_name,
-            "date": _normalize_date(_first_present(item, DATE_FIELD_NAMES), year_month),
+            "date": resolved_date,
             "in": None,
             "out": None,
             "source_filename": source_filename,
             "source_filenames": [source_filename],
             "all_times": sorted(set(times), key=_time_minutes),
-            "warnings": item.get("warnings") if isinstance(item.get("warnings"), list) else [],
+            "warnings": warnings,
         }
         if card_no:
             row["source_card_no"] = card_no
+        if row_index is not None:
+            row["source_row_index"] = row_index
+        if date_identity_status:
+            row["date_identity_status"] = date_identity_status
         if prefer_visible_name and ocr_name_hint:
             row["ocr_name"] = ocr_name_hint
         if row["all_times"]:
@@ -651,6 +677,69 @@ def _normalize_card_no(value: Any) -> str | None:
     return text
 
 
+def _normalize_timecard_row_index(value: Any, card_no: str | None) -> int | None:
+    if value in (None, ""):
+        return None
+    match = re.search(r"(?<!\d)(\d{1,2})(?!\d)", str(value))
+    if not match:
+        return None
+    row_index = int(match.group(1))
+    maximum = 15 if card_no == "1" else 16 if card_no == "2" else 31
+    return row_index if 1 <= row_index <= maximum else None
+
+
+def _resolve_timecard_date(
+    normalized_date: str | None,
+    year_month: tuple[int, int] | None,
+    card_no: str | None,
+    row_index: int | None,
+) -> tuple[str | None, str | None, str | None]:
+    if card_no not in {"1", "2"}:
+        return normalized_date, None, None
+
+    if row_index is not None:
+        day = row_index if card_no == "1" else row_index + 15
+        if year_month:
+            year, month = year_month
+            if day > monthrange(year, month)[1]:
+                month_name = _month_name(month)
+                warning = (
+                    f"Card {card_no} 第 {row_index} 列推算為 {day} {month_name} {year}，"
+                    "但該月份沒有此日期，請覆核。"
+                )
+                return None, "invalid_card_row", warning
+            return f"{year:04d}-{month:02d}-{day:02d}", "card_row", None
+        return str(day), "card_row", None
+
+    day = _day_from_normalized_date(normalized_date)
+    valid_range = range(1, 16) if card_no == "1" else range(16, 32)
+    if day in valid_range and _day_exists_in_month(day, year_month):
+        return normalized_date, "printed_date", None
+
+    warning = f"Card {card_no} 日期數字可能被遮擋，且未能辨識實體列次，請覆核日期。"
+    return None, "card_date_review", warning
+
+
+def _day_from_normalized_date(value: str | None) -> int | None:
+    text = str(value or "").strip()
+    iso_match = re.fullmatch(r"\d{4}-\d{2}-(\d{2})", text)
+    if iso_match:
+        return int(iso_match.group(1))
+    day_match = re.fullmatch(r"([1-9]|[12]\d|3[01])", text)
+    return int(day_match.group(1)) if day_match else None
+
+
+def _day_exists_in_month(day: int | None, year_month: tuple[int, int] | None) -> bool:
+    if day is None or not year_month:
+        return day is not None
+    year, month = year_month
+    return day <= monthrange(year, month)[1]
+
+
+def _month_name(month: int) -> str:
+    return month_name[month] if 1 <= month <= 12 else f"month {month}"
+
+
 def _is_d_and_g_context(context_hint: str | None) -> bool:
     text = (context_hint or "").lower()
     return any(marker in text for marker in ("d&g", "daniel & co", "promoter work record"))
@@ -690,6 +779,10 @@ def merge_logsheet_daily_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]
                 merged[key]["source_staff_name_hint"] = row["source_staff_name_hint"]
             if row.get("source_staff_label"):
                 merged[key]["source_staff_label"] = row["source_staff_label"]
+            if row.get("source_row_index") is not None:
+                merged[key]["source_row_index"] = row["source_row_index"]
+            if row.get("date_identity_status"):
+                merged[key]["date_identity_status"] = row["date_identity_status"]
             if row.get("name_identity_status"):
                 merged[key]["name_identity_status"] = row["name_identity_status"]
             order.append(key)
@@ -705,6 +798,10 @@ def merge_logsheet_daily_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]
             target["source_staff_name_hint"] = row["source_staff_name_hint"]
         if row.get("source_staff_label") and not target.get("source_staff_label"):
             target["source_staff_label"] = row["source_staff_label"]
+        if row.get("source_row_index") is not None and target.get("source_row_index") is None:
+            target["source_row_index"] = row["source_row_index"]
+        if row.get("date_identity_status") and not target.get("date_identity_status"):
+            target["date_identity_status"] = row["date_identity_status"]
         identity_status = _stronger_identity_status(
             target.get("name_identity_status"),
             row.get("name_identity_status"),
@@ -800,6 +897,7 @@ Required JSON shape:
       "overtime_in": null,
       "overtime_out": null,
       "card_no": null,
+      "row_index": null,
       "all_times": [],
       "warnings": []
     }}
@@ -818,6 +916,9 @@ Rules:
 - For Oil Street Comix timecards, there can be two half-month card formats: blue Card 1 usually covers dates 1-15, orange Card 2 usually covers dates 16-31.
 - If a single image/PDF page contains both cards, extract both cards independently and do not drop either side.
 - For Oil Street timecards, include "card_no" as "1" or "2" when visible or clear from the blue/orange card design.
+- For each worked Oil Street timecard row, include "row_index" as its physical data-row position, counting every printed date row from the top even when intervening rows are blank.
+- Card 1 physical rows 1-15 map to dates 1-15. Card 2 physical rows 1-16 map to dates 16-31.
+- Determine "row_index" from horizontal grid position, not from a partly hidden printed date digit.
 - Preserve MORNING IN/OUT, AFTERNOON IN/OUT, and OVER TIME IN/OUT in their specific JSON fields when readable, then also include every readable punch in "all_times".
 - For each date/day row, collect every readable handwritten punch time in that row from MORNING, AFTERNOON, and OVER TIME columns.
 - If a handwritten time includes the day prefix, such as "21 09:40", normalize the time to "09:40".

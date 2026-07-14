@@ -156,6 +156,73 @@ def test_normalizes_daily_rows_to_first_in_last_out():
     ]
 
 
+def test_card_two_row_index_recovers_date_when_tens_digit_is_hidden():
+    rows = openrouter_ocr.normalize_logsheet_daily_rows(
+        {
+            "month_year": "June 2026",
+            "daily_rows": [
+                {
+                    "row_index": 2,
+                    "date": "7",
+                    "morning_in": "09:30",
+                    "afternoon_out": "20:15",
+                }
+            ],
+        },
+        "Oi! timecard_June 2026 (All Staff).pdf",
+        source_card_no=2,
+    )
+
+    assert rows[0]["date"] == "2026-06-17"
+    assert rows[0]["source_row_index"] == 2
+    assert rows[0]["date_identity_status"] == "card_row"
+    assert not rows[0]["warnings"]
+
+
+def test_card_one_row_index_maps_directly_to_first_half_date():
+    rows = openrouter_ocr.normalize_logsheet_daily_rows(
+        {
+            "month_year": "June 2026",
+            "daily_rows": [{"row_index": 15, "date": None, "in": "09:30", "out": "20:15"}],
+        },
+        "timecard June 2026.jpg",
+        source_card_no=1,
+    )
+
+    assert rows[0]["date"] == "2026-06-15"
+    assert rows[0]["date_identity_status"] == "card_row"
+
+
+def test_card_row_outside_month_is_kept_for_date_review():
+    rows = openrouter_ocr.normalize_logsheet_daily_rows(
+        {
+            "month_year": "June 2026",
+            "daily_rows": [{"row_index": 16, "date": "31", "in": "09:30", "out": "20:15"}],
+        },
+        "timecard June 2026.jpg",
+        source_card_no=2,
+    )
+
+    assert rows[0]["date"] is None
+    assert rows[0]["date_identity_status"] == "invalid_card_row"
+    assert any("June 2026" in warning and "31" in warning for warning in rows[0]["warnings"])
+
+
+def test_obscured_second_half_date_without_row_index_is_not_guessed():
+    rows = openrouter_ocr.normalize_logsheet_daily_rows(
+        {
+            "month_year": "June 2026",
+            "daily_rows": [{"date": "7", "in": "09:30", "out": "20:15"}],
+        },
+        "timecard June 2026.jpg",
+        source_card_no=2,
+    )
+
+    assert rows[0]["date"] is None
+    assert rows[0]["date_identity_status"] == "card_date_review"
+    assert any("Card 2" in warning and "列次" in warning for warning in rows[0]["warnings"])
+
+
 def test_merges_multiple_images_by_name_and_date():
     rows = openrouter_ocr.merge_logsheet_daily_rows(
         [
@@ -352,6 +419,7 @@ def test_pdf_staff_label_overrides_different_handwritten_card_name(monkeypatch):
                                 "daily_rows": [
                                     {
                                         "name": "Lau Ka Yiu Yo Yo",
+                                        "row_index": 1,
                                         "date": "6",
                                         "morning_in": "09:16",
                                         "afternoon_out": "20:15",
@@ -387,6 +455,9 @@ def test_pdf_staff_label_overrides_different_handwritten_card_name(monkeypatch):
     assert "ocr_name" not in row
     assert row["source_staff_name_hint"] == "Lam Wai Ching Jade"
     assert row["name_identity_status"] == "roster_label"
+    assert row["date"] == "2026-06-16"
+    assert row["source_row_index"] == 1
+    assert row["date_identity_status"] == "card_row"
     assert not any("Lau Ka Yiu Yo Yo" in warning for warning in row["warnings"])
 
 

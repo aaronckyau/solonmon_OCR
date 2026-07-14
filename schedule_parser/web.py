@@ -414,6 +414,8 @@ def _ocr_prompt_for_source(prompt: str | None, metadata: dict[str, Any]) -> str 
             f"- The printed label above this card is the authoritative Excel roster name: {staff_name_hint}.\n"
             "- Ignore any handwritten name inside the card. It is not an identity source.\n"
             f"- Return the row-level name exactly as {staff_name_hint}.\n"
+            "- For every worked row, return \"row_index\" as its physical data row counted from the top.\n"
+            "- Count blank printed rows when determining row_index; do not use a partly hidden date digit.\n"
             f"- Extract every worked day visible on Card {card_no}; do not summarize or omit sparse rows.\n"
             "- Read each stamped time from its own horizontal date row."
         )
@@ -423,6 +425,8 @@ def _ocr_prompt_for_source(prompt: str | None, metadata: dict[str, Any]) -> str 
             f"- The printed label above these cards is the authoritative Excel roster name: {staff_name_hint}.\n"
             "- Ignore any handwritten name inside either card. It is not an identity source.\n"
             f"- Return the row-level name exactly as {staff_name_hint}.\n"
+            "- For every worked row, return card_no and \"row_index\" as its physical data row counted from the top.\n"
+            "- Count blank printed rows when determining row_index; do not use a partly hidden date digit.\n"
             "- Extract every worked day from both Card 1 and Card 2; do not summarize or omit sparse rows."
         )
     else:
@@ -431,6 +435,8 @@ def _ocr_prompt_for_source(prompt: str | None, metadata: dict[str, Any]) -> str 
             f"- The printed label above this card ({source_staff_label or 'unreadable'}) did not match the Excel roster.\n"
             "- Ignore any handwritten name inside the card. It is not an identity source.\n"
             "- Return null for every row-level name and extract only dates and stamped times.\n"
+            "- For every worked row, return \"row_index\" as its physical data row counted from the top.\n"
+            "- Count blank printed rows when determining row_index; do not use a partly hidden date digit.\n"
             "- Do not invent, correct, or add a staff name. The user will choose from the Excel roster."
         )
     return f"{prompt}\n\n{instruction}".strip() if prompt else instruction

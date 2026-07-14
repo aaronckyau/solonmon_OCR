@@ -106,6 +106,30 @@ def test_preserves_generated_card_preview_metadata_in_comparison_row():
     assert matched["source_parts"][0]["source_preview_path"] == preview_path
 
 
+def test_card_date_review_metadata_reaches_comparison_row():
+    warning = "Card 2 日期數字可能被遮擋，且未能辨識實體列次，請覆核日期。"
+    result = compare_schedule_to_ocr(
+        sample_schedule(),
+        [
+            {
+                "name": "Cheng Nuo Isla",
+                "date": None,
+                "in": "09:41",
+                "out": "20:15",
+                "source_row_index": None,
+                "date_identity_status": "card_date_review",
+                "warnings": [warning],
+            }
+        ],
+    )
+
+    unmatched = next(row for row in result["rows"] if row["status"] == "Date Not Matched")
+    assert unmatched["date_identity_status"] == "card_date_review"
+    assert unmatched["source_row_index"] is None
+    assert "Date Check" in unmatched["flags"]
+    assert unmatched["notes"] == warning
+
+
 def test_unresolved_pdf_label_does_not_create_a_new_roster_name():
     result = compare_schedule_to_ocr(
         sample_schedule(),

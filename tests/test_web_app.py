@@ -902,6 +902,8 @@ def test_oil_street_all_staff_pdf_uses_roster_names_for_individual_cards(monkeyp
     assert all("authoritative Excel roster name" in call[1] for call in calls)
     assert all("Ignore any handwritten name" in call[1] for call in calls)
     assert all("Return the row-level name exactly as" in call[1] for call in calls)
+    assert all('"row_index"' in call[1] for call in calls)
+    assert all("physical data row" in call[1] for call in calls)
 
 
 def test_compare_roster_success_returns_summary():

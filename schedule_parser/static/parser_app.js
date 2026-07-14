@@ -4760,6 +4760,8 @@ function mergeOcrDailyRows(rows) {
         ocr_name: row.ocr_name || "",
         source_staff_label: row.source_staff_label || "",
         source_staff_name_hint: row.source_staff_name_hint || "",
+        source_row_index: row.source_row_index ?? "",
+        date_identity_status: row.date_identity_status || "",
         name_identity_status: row.name_identity_status || "",
         original_name_identity_status: row.original_name_identity_status || "",
         original_name: row.original_name || name || "",
@@ -4773,6 +4775,10 @@ function mergeOcrDailyRows(rows) {
     target.ocr_name = target.ocr_name || row.ocr_name || "";
     target.source_staff_label = target.source_staff_label || row.source_staff_label || "";
     target.source_staff_name_hint = target.source_staff_name_hint || row.source_staff_name_hint || "";
+    if (target.source_row_index === "" && row.source_row_index !== null && row.source_row_index !== undefined) {
+      target.source_row_index = row.source_row_index;
+    }
+    target.date_identity_status = target.date_identity_status || row.date_identity_status || "";
     target.name_identity_status = strongerNameIdentityStatus(
       target.name_identity_status,
       row.name_identity_status,
@@ -4831,6 +4837,7 @@ function formatOcrSourceHtml(row) {
   const cards = row.source_card_nos || (row.source_card_no ? [row.source_card_no] : []);
   if (pages.length) parts.push(`p.${pages.join(",")}`);
   if (cards.length) parts.push(`card ${cards.join("/")}`);
+  if (row.source_row_index) parts.push(`第 ${row.source_row_index} 列`);
   const partNames = row.source_part_filenames || (row.source_part_filename ? [row.source_part_filename] : []);
   const sourceText = parts.join(" · ") || partNames.join(", ") || "";
   const links = sourceLinksHtml(sourcePreviewFilenamesForRow(row), row.name || row.ocr_name || "");
