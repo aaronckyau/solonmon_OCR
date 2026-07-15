@@ -963,6 +963,11 @@ h3 {
   cursor: grabbing;
 }
 
+.oil-card-preview-stage[hidden],
+.oil-card-crop-editor[hidden] {
+  display: none;
+}
+
 .oil-card-preview-stage img {
   position: absolute;
   inset: 0;
@@ -980,13 +985,18 @@ h3 {
 }
 
 .oil-card-crop-editor {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  height: 470px;
+  overflow: hidden;
   padding: 10px;
   background: #f8fbfc;
 }
 
 .oil-card-editor-fields {
   justify-content: space-between;
-  margin-bottom: 8px;
+  margin-bottom: 0;
 }
 
 .oil-card-editor-fields label {
@@ -1008,7 +1018,7 @@ h3 {
 }
 
 .oil-card-crop-stage {
-  height: 430px;
+  min-height: 0;
   display: grid;
   place-items: center;
   overflow: hidden;
@@ -1069,7 +1079,7 @@ h3 {
 .oil-card-crop-handle.is-se { right: -8px; bottom: -8px; cursor: nwse-resize; }
 
 .oil-card-editor-note {
-  margin: 7px 0 0;
+  margin: 0;
   color: var(--muted);
   font-size: 11px;
 }
@@ -3086,6 +3096,11 @@ summary:hover {
 
   .oil-card-preview-stage {
     height: 360px;
+  }
+
+  .oil-card-crop-editor {
+    height: auto;
+    overflow: visible;
   }
 
   .oil-card-crop-stage {

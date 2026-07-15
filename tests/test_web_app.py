@@ -446,6 +446,9 @@ def test_oil_street_card_review_supports_prepare_preview_and_part_ocr():
     assert "function sourcePreviewFilenamesForRow" in script
     assert ".oil-card-workspace" in styles
     assert ".oil-card-preview-stage" in styles
+    assert ".oil-card-preview-stage[hidden],\n.oil-card-crop-editor[hidden] {\n  display: none;" in styles
+    assert "grid-template-rows: auto minmax(0, 1fr) auto;" in styles
+    assert ".oil-card-crop-editor {\n  display: grid;" in styles
     assert ".oil-card-preview-stage img {\n  position: absolute;\n  inset: 0;\n  display: block;" in styles
     assert "  width: 100%;\n  height: 100%;" in styles
     assert ".oil-card-crop-box" in styles
