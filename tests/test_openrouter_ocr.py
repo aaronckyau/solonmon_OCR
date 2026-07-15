@@ -193,6 +193,103 @@ def test_card_one_row_index_maps_directly_to_first_half_date():
     assert rows[0]["date_identity_status"] == "card_row"
 
 
+def test_card_one_physical_row_index_skips_unlabeled_spacer_row():
+    rows = openrouter_ocr.normalize_logsheet_daily_rows(
+        {
+            "month_year": "April 2025",
+            "daily_rows": [
+                {
+                    "physical_row_index": 5,
+                    "date": None,
+                    "morning_in": "09:49",
+                    "overtime_out": "18:48",
+                }
+            ],
+        },
+        "Fanny Ho 1.jpg",
+        source_card_no=1,
+    )
+
+    assert rows[0]["date"] == "2025-04-04"
+    assert rows[0]["source_row_index"] == 4
+    assert rows[0]["date_identity_status"] == "card_row"
+
+
+def test_card_one_visible_date_corrects_spacer_shifted_row_index():
+    rows = openrouter_ocr.normalize_logsheet_daily_rows(
+        {
+            "month_year": "April 2025",
+            "daily_rows": [
+                {
+                    "row_index": 5,
+                    "date": "4",
+                    "morning_in": "09:49",
+                    "overtime_out": "18:48",
+                }
+            ],
+        },
+        "Fanny Ho 1.jpg",
+        source_card_no=1,
+    )
+
+    assert rows[0]["date"] == "2025-04-04"
+    assert rows[0]["source_row_index"] == 4
+    assert any("空白間隔列" in warning for warning in rows[0]["warnings"])
+
+
+def test_fanny_ho_card_one_template_rows_preserve_known_punches():
+    rows = openrouter_ocr.normalize_logsheet_daily_rows(
+        {
+            "month_year": "April 2025",
+            "daily_rows": [
+                {
+                    "physical_row_index": 5,
+                    "morning_in": "09:40",
+                    "morning_out": "11:58",
+                    "afternoon_in": "12:54",
+                    "overtime_out": "18:48",
+                    "warnings": ["下午 OUT 格的印章已被塗改，忽略該印章。"],
+                },
+                {
+                    "physical_row_index": 13,
+                    "afternoon_in": "12:28",
+                    "afternoon_out": "16:53",
+                },
+            ],
+        },
+        "Fanny Ho 1.jpg",
+        source_card_no=1,
+    )
+
+    assert [(row["date"], row["in"], row["out"]) for row in rows] == [
+        ("2025-04-04", "09:40", "18:48"),
+        ("2025-04-12", "12:28", "16:53"),
+    ]
+    assert rows[0]["all_times"] == ["09:40", "11:58", "12:54", "18:48"]
+    assert any("塗改" in warning for warning in rows[0]["warnings"])
+
+
+def test_fanny_ho_card_two_has_no_spacer_before_date_sixteen():
+    rows = openrouter_ocr.normalize_logsheet_daily_rows(
+        {
+            "month_year": "April 2025",
+            "daily_rows": [
+                {"physical_row_index": 2, "afternoon_in": "12:27", "afternoon_out": "16:50"},
+                {"physical_row_index": 9, "afternoon_in": "12:17", "afternoon_out": "16:50"},
+                {"physical_row_index": 11, "afternoon_in": "12:13", "afternoon_out": "16:50"},
+            ],
+        },
+        "Fanny Ho 2.jpg",
+        source_card_no=2,
+    )
+
+    assert [(row["date"], row["in"], row["out"]) for row in rows] == [
+        ("2025-04-17", "12:27", "16:50"),
+        ("2025-04-24", "12:17", "16:50"),
+        ("2025-04-26", "12:13", "16:50"),
+    ]
+
+
 def test_card_row_outside_month_is_kept_for_date_review():
     rows = openrouter_ocr.normalize_logsheet_daily_rows(
         {
@@ -710,6 +807,10 @@ def test_prompt_warns_against_row_numbers_as_punch_times():
     assert "Never combine that row number with a nearby time" in prompt
     assert "SIGNATURE, CHECK, ADMIN" in prompt
     assert "same horizontal row" in prompt
+    assert "one unlabeled spacer grid row" in prompt
+    assert "Card 1 physical grid row 2 maps to date 1" in prompt
+    assert "Card 2 has no spacer row" in prompt
+    assert "crossed out, scribbled over, or cancelled" in prompt
 
 
 def test_extracts_daily_rows_from_truncated_fenced_json():

@@ -123,10 +123,12 @@ CARD_FIELD_NAMES = (
 )
 ROW_INDEX_FIELD_NAMES = (
     "row_index",
-    "physical_row_index",
-    "table_row_index",
     "row_number",
     "row_no",
+)
+PHYSICAL_ROW_INDEX_FIELD_NAMES = (
+    "physical_row_index",
+    "table_row_index",
 )
 MONTHS = {
     "jan": 1,
@@ -519,8 +521,18 @@ def normalize_logsheet_daily_rows(
             continue
         row_name = ocr_name_hint if prefer_visible_name else filename_name_hint or ocr_name_hint
         card_no = metadata_card_no or _normalize_card_no(_first_present(item, CARD_FIELD_NAMES))
-        row_index = _normalize_timecard_row_index(_first_present(item, ROW_INDEX_FIELD_NAMES), card_no)
         raw_date = _normalize_date(_first_present(item, DATE_FIELD_NAMES), year_month)
+        row_index = _normalize_timecard_row_index(_first_present(item, ROW_INDEX_FIELD_NAMES), card_no)
+        physical_row_index = _normalize_physical_timecard_row_index(
+            _first_present(item, PHYSICAL_ROW_INDEX_FIELD_NAMES),
+            card_no,
+        )
+        row_index, row_index_warning = _resolve_timecard_row_index(
+            raw_date,
+            card_no,
+            row_index,
+            physical_row_index,
+        )
         resolved_date, date_identity_status, date_warning = _resolve_timecard_date(
             raw_date,
             year_month,
@@ -528,6 +540,8 @@ def normalize_logsheet_daily_rows(
             row_index,
         )
         warnings = list(item.get("warnings")) if isinstance(item.get("warnings"), list) else []
+        if row_index_warning and row_index_warning not in warnings:
+            warnings.append(row_index_warning)
         if date_warning and date_warning not in warnings:
             warnings.append(date_warning)
         row = {
@@ -686,6 +700,36 @@ def _normalize_timecard_row_index(value: Any, card_no: str | None) -> int | None
     row_index = int(match.group(1))
     maximum = 15 if card_no == "1" else 16 if card_no == "2" else 31
     return row_index if 1 <= row_index <= maximum else None
+
+
+def _normalize_physical_timecard_row_index(value: Any, card_no: str | None) -> int | None:
+    if value in (None, ""):
+        return None
+    match = re.search(r"(?<!\d)(\d{1,2})(?!\d)", str(value))
+    if not match:
+        return None
+    row_index = int(match.group(1))
+    maximum = 16 if card_no in {"1", "2"} else 31
+    return row_index if 1 <= row_index <= maximum else None
+
+
+def _resolve_timecard_row_index(
+    normalized_date: str | None,
+    card_no: str | None,
+    row_index: int | None,
+    physical_row_index: int | None,
+) -> tuple[int | None, str | None]:
+    if row_index is None and physical_row_index is not None:
+        if card_no == "1":
+            row_index = physical_row_index - 1 if physical_row_index >= 2 else None
+        else:
+            row_index = physical_row_index
+
+    printed_day = _day_from_normalized_date(normalized_date)
+    if card_no == "1" and row_index is not None and printed_day in range(1, 16):
+        if row_index == printed_day + 1:
+            return printed_day, "Card 1 空白間隔列已校正：實體格列比印刷日期多一列。"
+    return row_index, None
 
 
 def _resolve_timecard_date(
@@ -898,6 +942,7 @@ Required JSON shape:
       "overtime_out": null,
       "card_no": null,
       "row_index": null,
+      "physical_row_index": null,
       "all_times": [],
       "warnings": []
     }}
@@ -916,12 +961,16 @@ Rules:
 - For Oil Street Comix timecards, there can be two half-month card formats: blue Card 1 usually covers dates 1-15, orange Card 2 usually covers dates 16-31.
 - If a single image/PDF page contains both cards, extract both cards independently and do not drop either side.
 - For Oil Street timecards, include "card_no" as "1" or "2" when visible or clear from the blue/orange card design.
-- For each worked Oil Street timecard row, include "row_index" as its physical data-row position, counting every printed date row from the top even when intervening rows are blank.
-- Card 1 physical rows 1-15 map to dates 1-15. Card 2 physical rows 1-16 map to dates 16-31.
+- Blue Card 1 has one unlabeled spacer grid row immediately below the column headers and above printed date 1. This spacer is not date 1 and must be ignored.
+- Card 1 physical grid row 2 maps to date 1, physical grid row 3 maps to date 2, through physical grid row 16 mapping to date 15.
+- Orange Card 2 has no spacer row. Its physical grid rows 1-16 map directly to dates 16-31.
+- For each worked Oil Street row, "row_index" is the normalized half-month index: Card 1 dates 1-15 use row_index 1-15; Card 2 dates 16-31 use row_index 1-16. Never include Card 1's spacer in row_index.
+- "physical_row_index" is optional and counts raw grid slots from the top, including Card 1's unlabeled spacer. Use it when printed date digits are hidden or unclear.
 - Determine "row_index" from horizontal grid position, not from a partly hidden printed date digit.
 - Preserve MORNING IN/OUT, AFTERNOON IN/OUT, and OVER TIME IN/OUT in their specific JSON fields when readable, then also include every readable punch in "all_times".
 - For each date/day row, collect every readable handwritten punch time in that row from MORNING, AFTERNOON, and OVER TIME columns.
 - If a handwritten time includes the day prefix, such as "21 09:40", normalize the time to "09:40".
+- Ignore any punch that is crossed out, scribbled over, or cancelled; preserve a warning that the cell was amended.
 - The printed or left-margin row number is the date/day only. Never combine that row number with a nearby time, and never treat it as a punch time.
 - Ignore grid row numbers, column headers, SIGNATURE, CHECK, ADMIN, and other printed form labels as punch times.
 - Only use handwritten punch times that are on the same horizontal row as the date/day. If row alignment is uncertain, keep the row but add a Traditional Chinese warning.
