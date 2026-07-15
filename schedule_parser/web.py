@@ -32,6 +32,7 @@ from .openrouter_ocr import (
 from .ocr_preview_store import (
     load_stored_ocr_preview,
     preview_data_path,
+    preview_ttl_seconds,
     read_stored_ocr_preview_bytes,
     store_prepared_ocr_source,
 )
@@ -148,14 +149,18 @@ def create_app() -> Flask:
         path = preview_data_path(preview_id)
         if stored is None or path is None:
             return _error_response("打卡紙預覽已過期，請重新上傳。", 404)
-        return send_file(
+        response = send_file(
             path,
             mimetype=stored.mime_type or "application/octet-stream",
             download_name=stored.filename,
             as_attachment=False,
             conditional=True,
-            max_age=3600,
+            max_age=preview_ttl_seconds(),
         )
+        response.headers["Cache-Control"] = (
+            f"private, max-age={preview_ttl_seconds()}, immutable"
+        )
+        return response
 
     @app.post("/api/ocr-preview/<preview_id>/recrop")
     def recrop_ocr_preview(preview_id: str):

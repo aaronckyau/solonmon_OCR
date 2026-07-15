@@ -35,6 +35,7 @@ def test_health_returns_ok():
 
 def test_prepare_logsheet_returns_preview_and_part_ocr(monkeypatch, tmp_path):
     monkeypatch.setenv("OCR_PREVIEW_DIR", str(tmp_path / "ocr-previews"))
+    monkeypatch.setenv("OCR_PREVIEW_TTL_SECONDS", "86400")
 
     def fake_ocr(file_bytes, filename, *, mime_type=None, prompt=None, source_filename=None, source_metadata=None):
         return {
@@ -88,6 +89,15 @@ def test_prepare_logsheet_returns_preview_and_part_ocr(monkeypatch, tmp_path):
     assert preview_response.status_code == 200
     assert preview_response.mimetype == "image/png"
     assert preview_response.data == png_bytes()
+    assert preview_response.headers["Cache-Control"] == "private, max-age=86400, immutable"
+    assert preview_response.headers["ETag"]
+
+    cached_preview_response = test_client.get(
+        part["preview_path"],
+        headers={"If-None-Match": preview_response.headers["ETag"]},
+    )
+    assert cached_preview_response.status_code == 304
+    assert cached_preview_response.data == b""
 
     ocr_response = test_client.post(
         f"/api/ocr-logsheet-part/{part['preview_id']}",
@@ -440,6 +450,9 @@ def test_oil_street_card_review_supports_prepare_preview_and_part_ocr():
     )[0]
     assert "runPreparedOcrWorkers" not in prepare_flow
     assert "function renderOilCardReview" in script
+    assert "const OIL_CARD_PRELOAD_DISTANCE = 3" in script
+    assert "function preloadAdjacentOilCardPreviews" in script
+    assert "const preview = new Image()" in script
     assert 'oilCardPreviewImage?.addEventListener("load", resetOilCardImageView)' in script
     assert "els.oilCardPreviewImage.dataset.previewId !== file.previewId" in script
     assert "function reviewLogsheetFiles" in script

@@ -76,6 +76,7 @@ const DEFAULT_PROJECT_PROFILE = "oil_street";
 const DEFAULT_EXPORT_TABLE_DATASET = "roster_summary";
 const WORKFLOW_STEP_ORDER = ["project-select", "schedule-upload", "check-schedule", "log-upload", "manage-schedule", "export"];
 const API_BASE_PATH = (document.body?.dataset.apiBase || "").replace(/\/+$/, "");
+const OIL_CARD_PRELOAD_DISTANCE = 3;
 const PROJECT_PROFILES = {
   oil_street: {
     id: "oil_street",
@@ -214,6 +215,8 @@ const state = {
 };
 
 let comparisonRequestId = 0;
+const oilCardPreviewPreloads = new Map();
+const oilCardPreviewCachedUrls = new Set();
 
 const els = {
   projectCards: [...document.querySelectorAll("[data-project-profile]")],
@@ -1219,6 +1222,32 @@ function activeOilCardFile() {
   return state.ocrPreviewFiles.find((file) => file.previewId === state.activeOilCardKey) || null;
 }
 
+function preloadOilCardPreview(url) {
+  if (!url || oilCardPreviewCachedUrls.has(url) || oilCardPreviewPreloads.has(url)) return;
+  const preview = new Image();
+  oilCardPreviewPreloads.set(url, preview);
+  preview.decoding = "async";
+  preview.addEventListener("load", () => {
+    oilCardPreviewPreloads.delete(url);
+    oilCardPreviewCachedUrls.add(url);
+  }, { once: true });
+  preview.addEventListener("error", () => {
+    oilCardPreviewPreloads.delete(url);
+  }, { once: true });
+  preview.src = url;
+}
+
+function preloadAdjacentOilCardPreviews() {
+  const files = state.ocrPreviewFiles || [];
+  const activeIndex = files.findIndex((file) => file.previewId === state.activeOilCardKey);
+  if (activeIndex < 0) return;
+  for (let distance = 1; distance <= OIL_CARD_PRELOAD_DISTANCE; distance += 1) {
+    [files[activeIndex + distance], files[activeIndex - distance]].forEach((file) => {
+      preloadOilCardPreview(file?.previewUrl || "");
+    });
+  }
+}
+
 function renderOilCardReview() {
   if (!els.oilCardReviewPanel) return;
   const files = state.ocrPreviewFiles || [];
@@ -1258,6 +1287,7 @@ function renderOilCardReview() {
     }).join("");
   }
   renderOilCardPreview(activeOilCardFile());
+  preloadAdjacentOilCardPreviews();
 }
 
 function oilCardSourceLabel(file) {
