@@ -184,6 +184,12 @@ const state = {
   logsheetFiles: [],
   ocrPreviewFiles: [],
   activeOilCardKey: "",
+  oilCardReviewReady: false,
+  oilCardOcrBusy: false,
+  oilCardCropEditing: false,
+  oilCardCropDraft: null,
+  oilCardCropOriginal: null,
+  oilCardCropDrag: null,
   oilCardImageView: { x: 0, y: 0, scale: 1 },
   oilCardImageDrag: null,
   activeLogsheetFileKey: "",
@@ -241,10 +247,22 @@ const els = {
   oilCardPreviewStage: document.getElementById("oilCardPreviewStage"),
   oilCardPreviewImage: document.getElementById("oilCardPreviewImage"),
   oilCardPreviewEmpty: document.getElementById("oilCardPreviewEmpty"),
+  oilCardConfirm: document.getElementById("oilCardConfirmButton"),
+  oilCardEdit: document.getElementById("oilCardEditButton"),
   oilCardZoomOut: document.getElementById("oilCardZoomOutButton"),
   oilCardZoomIn: document.getElementById("oilCardZoomInButton"),
   oilCardReset: document.getElementById("oilCardResetButton"),
   oilCardZoomValue: document.getElementById("oilCardZoomValue"),
+  oilCardCropEditor: document.getElementById("oilCardCropEditor"),
+  oilCardCropStage: document.getElementById("oilCardCropStage"),
+  oilCardCropSurface: document.getElementById("oilCardCropSurface"),
+  oilCardCropImage: document.getElementById("oilCardCropImage"),
+  oilCardCropBox: document.getElementById("oilCardCropBox"),
+  oilCardStaffSelect: document.getElementById("oilCardStaffSelect"),
+  oilCardNumberSelect: document.getElementById("oilCardNumberSelect"),
+  oilCardCropReset: document.getElementById("oilCardCropResetButton"),
+  oilCardCropCancel: document.getElementById("oilCardCropCancelButton"),
+  oilCardCropSave: document.getElementById("oilCardCropSaveButton"),
   compareStatus: document.getElementById("compareStatus"),
   compareButton: document.getElementById("compareButton"),
   lateGraceMinutes: document.getElementById("lateGraceMinutesInput"),
@@ -381,6 +399,17 @@ els.compareButton.addEventListener("click", () => refreshRosterComparison({ user
 els.logsheetAssignmentList?.addEventListener("change", handleLogsheetAssignmentChange);
 els.logsheetAssignmentList?.addEventListener("click", handleLogsheetPreviewClick);
 els.oilCardList?.addEventListener("click", handleOilCardClick);
+els.oilCardConfirm?.addEventListener("click", confirmOilCardSplitsAndOcr);
+els.oilCardEdit?.addEventListener("click", startOilCardCropEditing);
+els.oilCardCropReset?.addEventListener("click", resetOilCardCropDraft);
+els.oilCardCropCancel?.addEventListener("click", cancelOilCardCropEditing);
+els.oilCardCropSave?.addEventListener("click", saveOilCardCrop);
+els.oilCardCropImage?.addEventListener("load", fitOilCardCropSurface);
+els.oilCardCropStage?.addEventListener("pointerdown", handleOilCardCropPointerDown);
+els.oilCardCropStage?.addEventListener("pointermove", handleOilCardCropPointerMove);
+els.oilCardCropStage?.addEventListener("pointerup", endOilCardCropDrag);
+els.oilCardCropStage?.addEventListener("pointercancel", endOilCardCropDrag);
+window.addEventListener("resize", fitOilCardCropSurface);
 els.oilCardZoomOut?.addEventListener("click", () => zoomOilCardPreview(0.82));
 els.oilCardZoomIn?.addEventListener("click", () => zoomOilCardPreview(1.18));
 els.oilCardReset?.addEventListener("click", resetOilCardImageView);
@@ -859,6 +888,9 @@ function handleLogsheetFileSelectionChange() {
   const files = Array.from(els.logsheetFile?.files || []);
   state.ocrPreviewFiles = [];
   state.activeOilCardKey = "";
+  state.oilCardReviewReady = false;
+  state.oilCardOcrBusy = false;
+  cancelOilCardCropEditing();
   resetOilCardImageView();
   rememberLogsheetFiles(files);
   renderLogsheetAssignments();
@@ -883,10 +915,12 @@ async function ocrSingleFile(file, extraPrompt) {
 }
 
 async function ocrPreparedOilStreetFiles(files) {
-  const extraPrompt = els.ocrPrompt.value.trim();
   state.ocr = createOcrAggregate(files);
   state.ocrPreviewFiles = [];
   state.activeOilCardKey = "";
+  state.oilCardReviewReady = false;
+  state.oilCardOcrBusy = false;
+  cancelOilCardCropEditing();
   renderOcrResult();
   showOcrProgress(files.length);
   setStatus(`正在分類打卡紙 (${files.length} 個檔案)...`);
@@ -917,10 +951,34 @@ async function ocrPreparedOilStreetFiles(files) {
 
     state.ocr.ocr_part_count = preparedParts.length;
     state.ocr.source_part_filenames = state.ocrPreviewFiles.map((file) => file.name);
-    showOcrProgress(preparedParts.length);
-    setStatus(`已分類 ${preparedParts.length} 張打卡紙，正在逐張 OCR...`);
-    await runPreparedOcrWorkers(extraPrompt, 3);
+    state.oilCardReviewReady = true;
+    setStatus(`已分類 ${preparedParts.length} 張打卡紙。請先核對分割框，再按「確認分割並開始 OCR」。`);
+  } finally {
+    els.ocr.disabled = false;
+    renderOilCardReview();
+  }
+}
 
+async function confirmOilCardSplitsAndOcr() {
+  const files = state.ocrPreviewFiles || [];
+  if (!files.length || state.oilCardOcrBusy) return;
+  cancelOilCardCropEditing();
+  state.oilCardOcrBusy = true;
+  state.ocr = createOcrAggregate(state.logsheetFiles || []);
+  state.ocr.ocr_part_count = files.length;
+  state.ocr.source_part_filenames = files.map((file) => file.name);
+  files.forEach((file) => {
+    file.ocrStatus = "prepared";
+    file.ocrRows = 0;
+    file.ocrError = "";
+    file.ocrDailyRows = [];
+  });
+  renderOcrResult();
+  showOcrProgress(files.length);
+  setStatus(`分割已確認，正在 OCR ${files.length} 張打卡紙...`);
+  renderOilCardReview();
+  try {
+    await runPreparedOcrWorkers(els.ocrPrompt.value.trim(), 3);
     const rows = ocrRows();
     const errorCount = (state.ocr.errors || []).length;
     const noDataCount = (state.ocr.no_data_files || []).length;
@@ -934,7 +992,7 @@ async function ocrPreparedOilStreetFiles(files) {
     await refreshRosterComparison();
     if (rows.length) setWorkflowStep("manage-schedule");
   } finally {
-    els.ocr.disabled = false;
+    state.oilCardOcrBusy = false;
     renderOilCardReview();
   }
 }
@@ -1069,53 +1127,59 @@ function isPreviewableLogsheetImage(file) {
 }
 
 function setPreparedOcrParts(parts) {
-  state.ocrPreviewFiles = (parts || []).map((part, index) => {
-    const metadata = part.metadata && typeof part.metadata === "object" ? part.metadata : {};
-    const hintStaff = String(metadata.source_staff_name_hint || "").trim();
-    const sourceStaffLabel = String(metadata.source_staff_label || "").trim();
-    const sourceType = String(metadata.source_type || "").trim();
-    const isRosterLabeledPdf = ["pdf_timecard_card", "pdf_timecard_pair"].includes(sourceType);
-    const previewPath = String(part.preview_path || metadata.source_preview_path || "").trim();
-    const mimeType = String(part.mime_type || "").toLowerCase();
-    return {
-      name: String(part.filename || `timecard-${index + 1}.jpg`),
-      displayName: hintStaff
-        ? `${hintStaff}（Excel roster）`
-        : sourceStaffLabel
-          ? `${sourceStaffLabel}（未對應 roster）`
-          : `待配對打卡紙 ${index + 1}`,
-      type: mimeType,
-      previewId: String(part.preview_id || ""),
-      previewPath,
-      previewUrl: mimeType.startsWith("image/") && previewPath ? apiUrl(previewPath) : "",
-      sourceFilename: String(part.source_filename || ""),
-      assignedStaff: "",
-      resolvedStaff: hintStaff,
-      visibleCardName: "",
-      sourceStaffLabel,
-      hintStaff,
-      identityStatus: isRosterLabeledPdf
-        ? (hintStaff ? "roster_label" : "unresolved_roster_label")
-        : "pending",
-      originalIdentityStatus: isRosterLabeledPdf
-        ? (hintStaff ? "roster_label" : "unresolved_roster_label")
-        : "pending",
-      ocrDailyRows: [],
-      metadata,
-      preprocessing: part.preprocessing || {},
-      uploadOrder: index,
-      ocrStatus: "prepared",
-      ocrRows: 0,
-      ocrError: "",
-      isGeneratedPreview: true,
-    };
-  });
+  state.ocrPreviewFiles = (parts || []).map((part, index) => oilCardFileFromPreparedPart(part, index));
   if (!state.ocrPreviewFiles.some((file) => file.previewId === state.activeOilCardKey)) {
     state.activeOilCardKey = state.ocrPreviewFiles[0]?.previewId || "";
     resetOilCardImageView();
   }
   renderOilCardReview();
   renderLogsheetAssignments();
+}
+
+function oilCardFileFromPreparedPart(part, index, previous = null) {
+  const metadata = part.metadata && typeof part.metadata === "object" ? part.metadata : {};
+  const hintStaff = String(metadata.source_staff_name_hint || "").trim();
+  const sourceStaffLabel = String(metadata.source_staff_label || "").trim();
+  const sourceType = String(metadata.source_type || "").trim();
+  const isRosterLabeledPdf = ["pdf_timecard_card", "pdf_timecard_pair"].includes(sourceType);
+  const previewPath = String(part.preview_path || metadata.source_preview_path || "").trim();
+  const editorPath = String(metadata.source_editor_preview_path || "").trim();
+  const mimeType = String(part.mime_type || "").toLowerCase();
+  return {
+    name: String(part.filename || `timecard-${index + 1}.jpg`),
+    displayName: hintStaff
+      ? `${hintStaff}（Excel roster）`
+      : sourceStaffLabel
+        ? `${sourceStaffLabel}（未對應 roster）`
+        : `待配對打卡紙 ${index + 1}`,
+    type: mimeType,
+    previewId: String(part.preview_id || ""),
+    previewPath,
+    previewUrl: mimeType.startsWith("image/") && previewPath ? apiUrl(previewPath) : "",
+    editorPreviewUrl: editorPath ? apiUrl(editorPath) : "",
+    sourceFilename: String(part.source_filename || previous?.sourceFilename || ""),
+    assignedStaff: previous?.assignedStaff || "",
+    resolvedStaff: hintStaff,
+    visibleCardName: "",
+    sourceStaffLabel,
+    hintStaff,
+    identityStatus: isRosterLabeledPdf
+      ? (hintStaff ? "roster_label" : "unresolved_roster_label")
+      : "pending",
+    originalIdentityStatus: isRosterLabeledPdf
+      ? (hintStaff ? "roster_label" : "unresolved_roster_label")
+      : "pending",
+    splitStatus: String(metadata.source_split_status || (editorPath ? "review" : "ready")),
+    splitReasons: Array.isArray(metadata.source_split_reasons) ? metadata.source_split_reasons : [],
+    ocrDailyRows: [],
+    metadata,
+    preprocessing: part.preprocessing || {},
+    uploadOrder: Number(previous?.uploadOrder ?? index),
+    ocrStatus: "prepared",
+    ocrRows: 0,
+    ocrError: "",
+    isGeneratedPreview: true,
+  };
 }
 
 function updateOilCardIdentity(file, rows) {
@@ -1162,9 +1226,19 @@ function renderOilCardReview() {
   if (!enabled) return;
 
   const completed = files.filter((file) => file.ocrStatus === "done").length;
+  const reviewCount = files.filter((file) => file.splitStatus === "review").length;
+  const correctedCount = files.filter((file) => file.splitStatus === "corrected").length;
   const staffCount = new Set(files.map((file) => file.assignedStaff || file.resolvedStaff).filter(Boolean)).size;
   if (els.oilCardSummary) {
-    els.oilCardSummary.textContent = `${files.length} 張 · ${staffCount} 位員工 · ${completed} 張完成`;
+    els.oilCardSummary.textContent = `${files.length} 張 · ${staffCount} 位員工 · ${reviewCount} 張需覆核${correctedCount ? ` · ${correctedCount} 張已修正` : ""} · ${completed} 張完成`;
+  }
+  if (els.oilCardConfirm) {
+    els.oilCardConfirm.disabled = !state.oilCardReviewReady || state.oilCardOcrBusy || state.oilCardCropEditing;
+    els.oilCardConfirm.textContent = state.oilCardOcrBusy
+      ? "OCR 處理中"
+      : completed
+        ? "重新 OCR 已確認分割"
+        : "確認分割並開始 OCR";
   }
   if (els.oilCardList) {
     els.oilCardList.innerHTML = files.map((file, index) => {
@@ -1199,31 +1273,46 @@ function oilCardStatusClass(file) {
   if (file.ocrStatus === "done") return "is-done";
   if (file.ocrStatus === "error") return "is-error";
   if (file.ocrStatus === "no-data") return "is-no-data";
+  if (file.splitStatus === "corrected") return "is-corrected";
+  if (file.splitStatus === "ready") return "is-ready";
+  if (file.splitStatus === "review") return "is-warning";
   return "";
 }
 
 function oilCardStatusLabel(file) {
   if (file.ocrStatus === "running") return "OCR 中";
+  if (file.ocrStatus === "done") return `${file.ocrRows} 筆`;
+  if (file.ocrStatus === "error") return "失敗";
+  if (file.ocrStatus === "no-data") return "OCR 需覆核";
+  if (file.splitStatus === "corrected") return "已手動修正";
+  if (file.splitStatus === "review") return "分割需覆核";
+  if (file.splitStatus === "ready") return "分割可用";
   if (file.identityStatus === "manual_override") return "已手動配對";
-  if (file.identityStatus === "roster_label") return file.ocrStatus === "done" ? `${file.ocrRows} 筆` : "roster 已配對";
+  if (file.identityStatus === "roster_label") return "roster 已配對";
   if (file.identityStatus === "unresolved_roster_label") return "標籤需覆核";
   if (file.identityStatus === "conflict") return "姓名衝突";
   if (file.identityStatus === "hint_fallback") return "姓名需覆核";
-  if (file.ocrStatus === "done") return `${file.ocrRows} 筆`;
-  if (file.ocrStatus === "error") return "失敗";
-  if (file.ocrStatus === "no-data") return "需覆核";
   return "已分類";
 }
 
 function renderOilCardPreview(file) {
   if (els.oilCardPreviewTitle) els.oilCardPreviewTitle.textContent = file?.displayName || "未選擇";
   if (els.oilCardPreviewMeta) {
+    const splitReason = file?.splitReasons?.[0] || "";
     els.oilCardPreviewMeta.textContent = file
-      ? [oilCardSourceLabel(file), oilCardIdentityLabel(file), oilCardStatusLabel(file)].filter(Boolean).join(" · ")
+      ? [oilCardSourceLabel(file), oilCardIdentityLabel(file), oilCardStatusLabel(file), splitReason].filter(Boolean).join(" · ")
       : "分類後選擇一位員工";
   }
   if (!els.oilCardPreviewImage || !els.oilCardPreviewEmpty) return;
-  if (file?.previewUrl) {
+  const editingThisFile = state.oilCardCropEditing && file?.previewId === state.activeOilCardKey;
+  els.oilCardPreviewStage.hidden = Boolean(editingThisFile);
+  if (els.oilCardCropEditor) els.oilCardCropEditor.hidden = !editingThisFile;
+  if (els.oilCardEdit) {
+    els.oilCardEdit.disabled = !file?.editorPreviewUrl || state.oilCardOcrBusy;
+  }
+  if (editingThisFile) {
+    renderOilCardCropEditor(file);
+  } else if (file?.previewUrl) {
     els.oilCardPreviewImage.src = file.previewUrl;
     els.oilCardPreviewImage.draggable = false;
     els.oilCardPreviewImage.hidden = false;
@@ -1261,11 +1350,217 @@ function oilCardIdentityLabel(file) {
   return file.resolvedStaff ? `配對：${file.resolvedStaff}` : "";
 }
 
+function startOilCardCropEditing() {
+  const file = activeOilCardFile();
+  const box = normalizedOilCardCropBox(file?.metadata?.source_crop_box);
+  if (!file?.editorPreviewUrl || !box) {
+    setStatus("這張打卡紙沒有整排分割底圖，請重新上傳 PDF。", true);
+    return;
+  }
+  state.oilCardCropEditing = true;
+  state.oilCardCropOriginal = { ...box };
+  state.oilCardCropDraft = { ...box };
+  state.oilCardCropDrag = null;
+  renderOilCardReview();
+}
+
+function cancelOilCardCropEditing() {
+  state.oilCardCropEditing = false;
+  state.oilCardCropDraft = null;
+  state.oilCardCropOriginal = null;
+  state.oilCardCropDrag = null;
+  if (els.oilCardCropEditor) els.oilCardCropEditor.hidden = true;
+  if (els.oilCardPreviewStage) els.oilCardPreviewStage.hidden = false;
+}
+
+function resetOilCardCropDraft() {
+  if (!state.oilCardCropOriginal) return;
+  state.oilCardCropDraft = { ...state.oilCardCropOriginal };
+  renderOilCardCropBox();
+}
+
+function normalizedOilCardCropBox(value) {
+  if (!value || typeof value !== "object") return null;
+  const box = {
+    left: Number(value.left),
+    top: Number(value.top),
+    right: Number(value.right),
+    bottom: Number(value.bottom),
+  };
+  return Object.values(box).every(Number.isFinite) ? box : null;
+}
+
+function oilCardEditorSize(file = activeOilCardFile()) {
+  const size = file?.metadata?.source_editor_size || {};
+  const width = Number(size.width || els.oilCardCropImage?.naturalWidth || 0);
+  const height = Number(size.height || els.oilCardCropImage?.naturalHeight || 0);
+  return width > 0 && height > 0 ? { width, height } : null;
+}
+
+function renderOilCardCropEditor(file) {
+  if (!file || !els.oilCardCropEditor) return;
+  const selectedStaff = file.assignedStaff || file.resolvedStaff || file.hintStaff || "";
+  if (els.oilCardStaffSelect) {
+    const names = staffAssignmentOptions();
+    els.oilCardStaffSelect.innerHTML = ["<option value=\"\">選擇員工</option>"]
+      .concat(names.map((name) => `<option value="${escapeAttr(name)}">${escapeHtml(name)}</option>`))
+      .join("");
+    els.oilCardStaffSelect.value = names.includes(selectedStaff) ? selectedStaff : "";
+  }
+  if (els.oilCardNumberSelect) {
+    els.oilCardNumberSelect.value = String(file.metadata?.source_card_no || 1);
+  }
+  if (els.oilCardCropImage && els.oilCardCropImage.getAttribute("src") !== file.editorPreviewUrl) {
+    els.oilCardCropImage.src = file.editorPreviewUrl;
+  } else {
+    fitOilCardCropSurface();
+  }
+  renderOilCardCropBox();
+}
+
+function fitOilCardCropSurface() {
+  const size = oilCardEditorSize();
+  if (!size || !els.oilCardCropStage || !els.oilCardCropSurface) return;
+  const availableWidth = Math.max(1, els.oilCardCropStage.clientWidth - 16);
+  const availableHeight = Math.max(1, els.oilCardCropStage.clientHeight - 16);
+  const scale = Math.min(availableWidth / size.width, availableHeight / size.height);
+  els.oilCardCropSurface.style.width = `${Math.max(1, Math.round(size.width * scale))}px`;
+  els.oilCardCropSurface.style.height = `${Math.max(1, Math.round(size.height * scale))}px`;
+  renderOilCardCropBox();
+}
+
+function renderOilCardCropBox() {
+  const box = state.oilCardCropDraft;
+  const size = oilCardEditorSize();
+  if (!box || !size || !els.oilCardCropBox) return;
+  els.oilCardCropBox.style.left = `${clamp(box.left / size.width * 100, 0, 100)}%`;
+  els.oilCardCropBox.style.top = `${clamp(box.top / size.height * 100, 0, 100)}%`;
+  els.oilCardCropBox.style.width = `${clamp((box.right - box.left) / size.width * 100, 0, 100)}%`;
+  els.oilCardCropBox.style.height = `${clamp((box.bottom - box.top) / size.height * 100, 0, 100)}%`;
+}
+
+function oilCardCropPoint(event) {
+  const size = oilCardEditorSize();
+  const rect = els.oilCardCropSurface?.getBoundingClientRect();
+  if (!size || !rect?.width || !rect?.height) return null;
+  return {
+    x: clamp((event.clientX - rect.left) / rect.width * size.width, 0, size.width),
+    y: clamp((event.clientY - rect.top) / rect.height * size.height, 0, size.height),
+  };
+}
+
+function handleOilCardCropPointerDown(event) {
+  if (!state.oilCardCropEditing || !state.oilCardCropDraft) return;
+  const point = oilCardCropPoint(event);
+  if (!point) return;
+  const handle = event.target.closest("[data-crop-handle]")?.dataset.cropHandle || "";
+  const insideBox = Boolean(event.target.closest("#oilCardCropBox"));
+  state.oilCardCropDrag = {
+    pointerId: event.pointerId,
+    mode: handle ? "resize" : insideBox ? "move" : "draw",
+    handle,
+    start: point,
+    box: { ...state.oilCardCropDraft },
+  };
+  if (!handle && !insideBox) {
+    state.oilCardCropDraft = { left: point.x, top: point.y, right: point.x, bottom: point.y };
+  }
+  els.oilCardCropStage?.setPointerCapture(event.pointerId);
+  event.preventDefault();
+}
+
+function handleOilCardCropPointerMove(event) {
+  const drag = state.oilCardCropDrag;
+  const size = oilCardEditorSize();
+  const point = oilCardCropPoint(event);
+  if (!drag || drag.pointerId !== event.pointerId || !size || !point) return;
+  const dx = point.x - drag.start.x;
+  const dy = point.y - drag.start.y;
+  const minimumWidth = Math.max(80, size.width * 0.04);
+  const minimumHeight = Math.max(180, size.height * 0.25);
+  let next = { ...drag.box };
+  if (drag.mode === "move") {
+    const width = drag.box.right - drag.box.left;
+    const height = drag.box.bottom - drag.box.top;
+    next.left = clamp(drag.box.left + dx, 0, size.width - width);
+    next.top = clamp(drag.box.top + dy, 0, size.height - height);
+    next.right = next.left + width;
+    next.bottom = next.top + height;
+  } else if (drag.mode === "draw") {
+    next = {
+      left: Math.min(drag.start.x, point.x),
+      top: Math.min(drag.start.y, point.y),
+      right: Math.max(drag.start.x, point.x),
+      bottom: Math.max(drag.start.y, point.y),
+    };
+  } else {
+    if (drag.handle.includes("w")) next.left = clamp(drag.box.left + dx, 0, drag.box.right - minimumWidth);
+    if (drag.handle.includes("e")) next.right = clamp(drag.box.right + dx, drag.box.left + minimumWidth, size.width);
+    if (drag.handle.includes("n")) next.top = clamp(drag.box.top + dy, 0, drag.box.bottom - minimumHeight);
+    if (drag.handle.includes("s")) next.bottom = clamp(drag.box.bottom + dy, drag.box.top + minimumHeight, size.height);
+  }
+  state.oilCardCropDraft = next;
+  renderOilCardCropBox();
+}
+
+function endOilCardCropDrag(event) {
+  const drag = state.oilCardCropDrag;
+  if (!drag || drag.pointerId !== event.pointerId) return;
+  state.oilCardCropDrag = null;
+  if (els.oilCardCropStage?.hasPointerCapture(event.pointerId)) {
+    els.oilCardCropStage.releasePointerCapture(event.pointerId);
+  }
+}
+
+async function saveOilCardCrop() {
+  const file = activeOilCardFile();
+  const index = state.ocrPreviewFiles.indexOf(file);
+  const staffName = String(els.oilCardStaffSelect?.value || "").trim();
+  const cardNo = Number(els.oilCardNumberSelect?.value || 0);
+  if (!file || index < 0 || !state.oilCardCropDraft || !staffName || ![1, 2].includes(cardNo)) {
+    setStatus("請框選完整打卡紙，並選擇 roster 員工及 Card 1/2。", true);
+    return;
+  }
+  if (els.oilCardCropSave) els.oilCardCropSave.disabled = true;
+  try {
+    const response = await fetch(apiUrl(`/api/ocr-preview/${encodeURIComponent(file.previewId)}/recrop`), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        crop_box: state.oilCardCropDraft,
+        staff_name: staffName,
+        staff_names: staffAssignmentOptions(),
+        card_no: cardNo,
+        enhance_image: els.ocrEnhanceImage?.checked !== false,
+      }),
+    });
+    const payload = await readApiJson(response, "重新裁切失敗：API 回傳格式不正確。");
+    if (!response.ok || !payload.ok) throw new Error(payload.error || "重新裁切打卡紙失敗。");
+    const replacement = oilCardFileFromPreparedPart(payload.prepared, index, file);
+    replacement.assignedStaff = "";
+    replacement.splitStatus = "corrected";
+    state.ocrPreviewFiles[index] = replacement;
+    state.activeOilCardKey = replacement.previewId;
+    state.oilCardCropEditing = false;
+    state.oilCardCropDraft = null;
+    state.oilCardCropOriginal = null;
+    setStatus(`${staffName} Card ${cardNo} 已套用手動裁切。`);
+    resetOilCardImageView();
+    renderOilCardReview();
+    renderLogsheetAssignments();
+  } catch (error) {
+    setStatus(apiErrorMessage(error, "/api/ocr-preview/:id/recrop"), true);
+  } finally {
+    if (els.oilCardCropSave) els.oilCardCropSave.disabled = false;
+  }
+}
+
 function handleOilCardClick(event) {
   const button = event.target.closest("[data-oil-card-key]");
   if (!button) return;
   const nextKey = button.dataset.oilCardKey || "";
   if (state.activeOilCardKey !== nextKey) {
+    cancelOilCardCropEditing();
     state.activeOilCardKey = nextKey;
     resetOilCardImageView();
   }
@@ -2779,6 +3074,12 @@ function clearPage() {
   state.logsheetFiles = [];
   state.ocrPreviewFiles = [];
   state.activeOilCardKey = "";
+  state.oilCardReviewReady = false;
+  state.oilCardOcrBusy = false;
+  state.oilCardCropEditing = false;
+  state.oilCardCropDraft = null;
+  state.oilCardCropOriginal = null;
+  state.oilCardCropDrag = null;
   state.oilCardImageView = { x: 0, y: 0, scale: 1 };
   state.oilCardImageDrag = null;
   state.activeLogsheetFileKey = "";

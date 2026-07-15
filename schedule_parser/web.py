@@ -16,7 +16,12 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.utils import secure_filename
 
 from .d_and_g import parse_d_and_g_schedule
-from .image_enhancement import PreparedOcrSource, prepare_ocr_image, prepare_oil_street_timecard_sources
+from .image_enhancement import (
+    PreparedOcrSource,
+    prepare_ocr_image,
+    prepare_oil_street_timecard_sources,
+    recrop_oil_street_timecard_source,
+)
 from .oil_street import parse_oil_street_schedule
 from .openrouter_ocr import (
     OpenRouterOCRAPIError,
@@ -89,7 +94,7 @@ def create_app() -> Flask:
                     enhance_images=enhance_images,
                     staff_names=staff_names,
                 )
-                parts.extend(store_prepared_ocr_source(source).to_public_dict() for source in sources)
+                parts.extend(_store_prepared_sources_for_review(sources))
             return jsonify({
                 "ok": True,
                 "prepared": {
@@ -151,6 +156,50 @@ def create_app() -> Flask:
             conditional=True,
             max_age=3600,
         )
+
+    @app.post("/api/ocr-preview/<preview_id>/recrop")
+    def recrop_ocr_preview(preview_id: str):
+        stored = load_stored_ocr_preview(preview_id)
+        if stored is None:
+            return _error_response("打卡紙預覽已過期，請重新上傳。", 404)
+        if stored.metadata.get("source_type") != "pdf_timecard_card":
+            return _error_response("只有 PDF 分割後的打卡紙可以重新裁切。", 400)
+        payload = request.get_json(silent=True) or {}
+        editor_preview_id = str(stored.metadata.get("source_editor_preview_id") or "").strip()
+        editor_bytes = read_stored_ocr_preview_bytes(editor_preview_id)
+        if not editor_preview_id or editor_bytes is None:
+            return _error_response("找不到整排打卡紙底圖，請重新上傳 PDF。", 400)
+        staff_name = str(payload.get("staff_name") or "").strip()
+        staff_names = [str(value or "").strip() for value in payload.get("staff_names") or []]
+        staff_names = [value for value in staff_names if value]
+        if not staff_name:
+            return _error_response("請從 Excel roster 選擇員工。", 400)
+        if staff_names and staff_name not in staff_names:
+            return _error_response("所選員工不在目前 Excel roster。", 400)
+        try:
+            card_no = int(payload.get("card_no"))
+        except (TypeError, ValueError):
+            card_no = 0
+        if card_no not in {1, 2}:
+            return _error_response("請選擇 Card 1 或 Card 2。", 400)
+        try:
+            replacement = recrop_oil_street_timecard_source(
+                editor_bytes,
+                source_filename=stored.source_filename,
+                filename=_recropped_part_filename(stored.filename, card_no),
+                crop_box=payload.get("crop_box"),
+                metadata=stored.metadata,
+                staff_name=staff_name,
+                card_no=card_no,
+                enabled=_coerce_bool(payload.get("enhance_image"), default=True),
+            )
+            prepared = store_prepared_ocr_source(replacement).to_public_dict()
+            return jsonify({"ok": True, "prepared": prepared})
+        except ValueError as exc:
+            return _error_response(str(exc), 400)
+        except Exception as exc:  # pragma: no cover - unexpected image/storage failure
+            details = traceback.format_exc() if app.config["SCHEDULE_PARSER_DEBUG"] else None
+            return _error_response(str(exc) or "重新裁切打卡紙失敗。", 500, details)
 
     @app.post("/api/ocr-logsheet")
     def ocr_logsheet():
@@ -353,6 +402,53 @@ def _prepared_ocr_sources(
             metadata={"source_type": "single", "source_part_count": 1},
         )
     ]
+
+
+def _store_prepared_sources_for_review(sources: list[PreparedOcrSource]) -> list[dict[str, Any]]:
+    editor_previews: dict[str, dict[str, Any]] = {}
+    prepared: list[dict[str, Any]] = []
+    for source in sources:
+        if source.editor_file_bytes and source.editor_filename:
+            editor_key = str(
+                source.editor_metadata.get("source_editor_key")
+                or source.metadata.get("source_editor_key")
+                or source.editor_filename
+            )
+            editor_public = editor_previews.get(editor_key)
+            if editor_public is None:
+                editor_source = PreparedOcrSource(
+                    file_bytes=source.editor_file_bytes,
+                    filename=source.editor_filename,
+                    mime_type=source.editor_mime_type or "image/jpeg",
+                    source_filename=source.source_filename,
+                    preprocessing={"enabled": False, "applied": False, "method": "editor_source"},
+                    metadata=dict(source.editor_metadata),
+                )
+                editor_public = store_prepared_ocr_source(editor_source).to_public_dict()
+                editor_previews[editor_key] = editor_public
+            source.metadata.update(
+                {
+                    "source_editor_preview_id": editor_public["preview_id"],
+                    "source_editor_preview_path": editor_public["preview_path"],
+                    "source_editor_size": editor_public["metadata"].get("source_editor_size")
+                    or source.metadata.get("source_editor_size"),
+                }
+            )
+            source.preprocessing.update(
+                {
+                    "source_editor_preview_id": editor_public["preview_id"],
+                    "source_editor_preview_path": editor_public["preview_path"],
+                }
+            )
+        prepared.append(store_prepared_ocr_source(source).to_public_dict())
+    return prepared
+
+
+def _recropped_part_filename(filename: str, card_no: int) -> str:
+    path = os.path.splitext(str(filename or "timecard.jpg"))
+    stem = re.sub(r"__card_[12]$", "", path[0], flags=re.IGNORECASE)
+    extension = path[1] if path[1].lower() in {".jpg", ".jpeg", ".png", ".webp"} else ".jpg"
+    return f"{stem}__card_{card_no}{extension}"
 
 
 def _staff_names_from_request() -> list[str]:

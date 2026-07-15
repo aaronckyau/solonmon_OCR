@@ -7,6 +7,7 @@ from pathlib import Path
 from PIL import Image
 import pytest
 
+from schedule_parser.image_enhancement import PreparedOcrSource
 from schedule_parser.web import create_app
 
 from conftest import save_d_and_g_workbook, save_jan_style_workbook, save_multi_month_workbook
@@ -99,6 +100,149 @@ def test_prepare_logsheet_returns_preview_and_part_ocr(monkeypatch, tmp_path):
     row = ocr_payload["ocr"]["daily_rows"][0]
     assert row["source_preview_path"] == part["preview_path"]
     assert row["source_parts"][0]["source_preview_path"] == part["preview_path"]
+
+
+def test_prepare_logsheet_returns_editor_source_and_can_recrop(monkeypatch, tmp_path):
+    monkeypatch.setenv("OCR_PREVIEW_DIR", str(tmp_path / "ocr-previews"))
+    parent = Image.new("RGB", (800, 600), "white")
+    parent_output = BytesIO()
+    parent.save(parent_output, format="PNG")
+    crop = parent.crop((100, 50, 350, 550))
+    crop_output = BytesIO()
+    crop.save(crop_output, format="PNG")
+    prepared = PreparedOcrSource(
+        file_bytes=crop_output.getvalue(),
+        filename="staff-1-card-1.png",
+        mime_type="image/png",
+        source_filename="all-staff.pdf",
+        preprocessing={"enabled": False},
+        metadata={
+            "source_type": "pdf_timecard_card",
+            "source_page": 1,
+            "source_staff_index": 1,
+            "source_staff_label": "Staff One",
+            "source_staff_name_hint": "Staff One",
+            "source_card_no": 1,
+            "source_crop_box": {"left": 100, "top": 50, "right": 350, "bottom": 550},
+            "source_split_status": "review",
+            "source_split_reasons": ["Test review"],
+        },
+        editor_file_bytes=parent_output.getvalue(),
+        editor_filename="all-staff-page-1-card-1-row.png",
+        editor_mime_type="image/png",
+        editor_metadata={
+            "source_type": "pdf_timecard_row_editor",
+            "source_editor_key": "page-1-card-1",
+            "source_editor_size": {"width": 800, "height": 600},
+        },
+    )
+    monkeypatch.setattr("schedule_parser.web._prepared_ocr_sources", lambda *args, **kwargs: [prepared])
+    ocr_calls = []
+
+    def fake_ocr(file_bytes, filename, *, mime_type=None, prompt=None, source_filename=None, source_metadata=None):
+        ocr_calls.append((filename, source_metadata))
+        return {
+            "source_filename": source_filename,
+            "source_part_filename": filename,
+            "source_metadata": source_metadata,
+            "configured_model": "fake-model",
+            "response_model": "fake-model",
+            "finish_reason": "stop",
+            "structured": {},
+            "daily_rows": [],
+            "usage": {},
+            "annotations": [],
+        }
+
+    monkeypatch.setattr("schedule_parser.web.ocr_logsheet_with_openrouter", fake_ocr)
+
+    test_client = client()
+    prepare_response = test_client.post(
+        "/api/prepare-logsheet",
+        data={
+            "logsheet": (BytesIO(b"pdf"), "all-staff.pdf"),
+            "project_profile": "oil_street",
+            "staff_names": json.dumps(["Staff One", "Staff Two"]),
+            "enhance_image": "0",
+        },
+        content_type="multipart/form-data",
+    )
+    part = prepare_response.get_json()["prepared"]["parts"][0]
+
+    assert part["metadata"]["source_editor_preview_id"]
+    assert part["metadata"]["source_editor_preview_path"].startswith("/api/ocr-preview/")
+    assert part["metadata"]["source_editor_size"] == {"width": 800, "height": 600}
+    editor_response = test_client.get(part["metadata"]["source_editor_preview_path"])
+    assert editor_response.status_code == 200
+    with Image.open(BytesIO(editor_response.data)) as editor_image:
+        assert editor_image.size == (800, 600)
+
+    recrop_response = test_client.post(
+        f"/api/ocr-preview/{part['preview_id']}/recrop",
+        json={
+            "crop_box": {"left": 300, "top": 40, "right": 700, "bottom": 560},
+            "staff_name": "Staff Two",
+            "staff_names": ["Staff One", "Staff Two"],
+            "card_no": 2,
+            "enhance_image": False,
+        },
+    )
+    recrop_payload = recrop_response.get_json()
+
+    assert recrop_response.status_code == 200
+    assert recrop_payload["ok"] is True
+    replacement = recrop_payload["prepared"]
+    assert replacement["preview_id"] != part["preview_id"]
+    assert replacement["metadata"]["source_staff_name_hint"] == "Staff Two"
+    assert replacement["metadata"]["source_card_no"] == 2
+    assert replacement["metadata"]["source_split_status"] == "corrected"
+    assert replacement["metadata"]["source_split_method"] == "manual_crop"
+    assert replacement["metadata"]["source_crop_box"] == {
+        "left": 300,
+        "top": 40,
+        "right": 700,
+        "bottom": 560,
+    }
+    preview_response = test_client.get(replacement["preview_path"])
+    with Image.open(BytesIO(preview_response.data)) as replacement_image:
+        assert replacement_image.size == (400, 520)
+
+    ocr_response = test_client.post(
+        f"/api/ocr-logsheet-part/{replacement['preview_id']}",
+        data={"project_profile": "oil_street"},
+    )
+
+    assert ocr_response.status_code == 200
+    assert ocr_calls[0][1]["source_staff_name_hint"] == "Staff Two"
+    assert ocr_calls[0][1]["source_card_no"] == 2
+    assert ocr_calls[0][1]["source_split_method"] == "manual_crop"
+
+
+def test_recrop_rejects_non_pdf_timecard_preview(monkeypatch, tmp_path):
+    monkeypatch.setenv("OCR_PREVIEW_DIR", str(tmp_path / "ocr-previews"))
+    test_client = client()
+    prepare_response = test_client.post(
+        "/api/prepare-logsheet",
+        data={
+            "logsheet": (BytesIO(png_bytes()), "single-card.png"),
+            "project_profile": "oil_street",
+        },
+        content_type="multipart/form-data",
+    )
+    part = prepare_response.get_json()["prepared"]["parts"][0]
+
+    response = test_client.post(
+        f"/api/ocr-preview/{part['preview_id']}/recrop",
+        json={
+            "crop_box": {"left": 0, "top": 0, "right": 200, "bottom": 200},
+            "staff_name": "Staff One",
+            "staff_names": ["Staff One"],
+            "card_no": 1,
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["error"] == "只有 PDF 分割後的打卡紙可以重新裁切。"
 
 
 def test_ocr_preview_rejects_unknown_token(monkeypatch, tmp_path):
@@ -273,18 +417,33 @@ def test_oil_street_card_review_supports_prepare_preview_and_part_ocr():
     styles = (root / "schedule_parser" / "static" / "parser_styles.css").read_text(encoding="utf-8")
 
     assert 'id="oilCardReviewPanel"' in body
+    assert "Step 3A" in body
+    assert "檢查打卡紙分割" in body
     assert 'id="oilCardList"' in body
     assert 'id="oilCardPreviewStage"' in body
     assert 'id="oilCardPreviewImage"' in body
+    assert 'id="oilCardConfirmButton"' in body
+    assert 'id="oilCardEditButton"' in body
+    assert 'id="oilCardCropEditor"' in body
+    assert 'id="oilCardStaffSelect"' in body
     assert 'fetch(apiUrl("/api/prepare-logsheet")' in script
     assert 'fetch(apiUrl(`/api/ocr-logsheet-part/${encodeURIComponent(part.previewId)}`)' in script
+    assert 'fetch(apiUrl(`/api/ocr-preview/${encodeURIComponent(file.previewId)}/recrop`)' in script
     assert "async function ocrPreparedOilStreetFiles" in script
-    assert "runPreparedOcrWorkers(extraPrompt, 3)" in script
+    assert "async function confirmOilCardSplitsAndOcr" in script
+    assert "async function saveOilCardCrop" in script
+    assert 'replacement.assignedStaff = ""' in script
+    assert "runPreparedOcrWorkers(els.ocrPrompt.value.trim(), 3)" in script
+    prepare_flow = script.split("async function ocrPreparedOilStreetFiles", 1)[1].split(
+        "async function confirmOilCardSplitsAndOcr", 1
+    )[0]
+    assert "runPreparedOcrWorkers" not in prepare_flow
     assert "function renderOilCardReview" in script
     assert "function reviewLogsheetFiles" in script
     assert "function sourcePreviewFilenamesForRow" in script
     assert ".oil-card-workspace" in styles
     assert ".oil-card-preview-stage" in styles
+    assert ".oil-card-crop-box" in styles
     assert ".oil-card-item.is-done" in styles
 
 

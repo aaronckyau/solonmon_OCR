@@ -155,6 +155,11 @@ def test_prepare_oil_street_all_staff_pdf_splits_one_source_per_card():
 
     assert len(sources) == 50
     assert {source.metadata["source_type"] for source in sources} == {"pdf_timecard_card"}
+    assert all(source.editor_file_bytes for source in sources)
+    assert all(source.editor_filename for source in sources)
+    assert all(source.metadata["source_editor_size"]["width"] > 0 for source in sources)
+    assert all(source.metadata["source_split_status"] in {"ready", "review"} for source in sources)
+    assert all(0 <= source.metadata["source_split_score"] <= 100 for source in sources)
     assert [source.metadata["source_page"] for source in sources] == [
         *([1] * 12),
         *([2] * 12),

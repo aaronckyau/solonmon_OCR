@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from io import BytesIO
 import mimetypes
 from pathlib import Path
@@ -31,6 +31,10 @@ class PreparedOcrSource:
     source_filename: str
     preprocessing: dict[str, Any]
     metadata: dict[str, Any]
+    editor_file_bytes: bytes | None = None
+    editor_filename: str | None = None
+    editor_mime_type: str | None = None
+    editor_metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -308,10 +312,21 @@ def _prepare_oil_street_pdf_timecard_sources(
             card_no: _timecard_row_crop_plan(row_image, len(labels), card_no)
             for card_no, row_image in row_images.items()
         }
+        row_editor_bytes = {
+            card_no: _image_to_jpeg_bytes(row_image)
+            for card_no, row_image in row_images.items()
+        }
         for staff_index, staff_label in enumerate(labels, start=1):
             staff_name_hint = staff_label.roster_name
             for card_no, row_image in sorted(row_images.items()):
                 column_bounds, column_split_method = row_crop_plans[card_no]
+                split_status, split_score, split_reasons = _timecard_split_quality(
+                    column_bounds,
+                    staff_index - 1,
+                    row_image.width,
+                    column_split_method,
+                    staff_name_resolved=bool(staff_name_hint),
+                )
                 card, crop_box, split_method = _crop_timecard_from_row(
                     row_image,
                     staff_index - 1,
@@ -346,6 +361,9 @@ def _prepare_oil_street_pdf_timecard_sources(
                         "source_crop_box": crop_box,
                         "source_crop_size": crop_size,
                         "source_split_method": split_method,
+                        "source_split_status": split_status,
+                        "source_split_score": split_score,
+                        "source_split_reasons": split_reasons,
                         "pdf_card_scale_factor": round(card_scale_factor, 3),
                     }
                 )
@@ -368,6 +386,22 @@ def _prepare_oil_street_pdf_timecard_sources(
                             "source_part_label": f"page {page_number}, staff {staff_index}, card {card_no}",
                             "source_crop_box": crop_box,
                             "source_split_method": split_method,
+                            "source_split_status": split_status,
+                            "source_split_score": split_score,
+                            "source_split_reasons": split_reasons,
+                            "source_editor_key": f"{filename}:page:{page_number}:card:{card_no}",
+                            "source_editor_size": {"width": row_image.width, "height": row_image.height},
+                        },
+                        editor_file_bytes=row_editor_bytes[card_no],
+                        editor_filename=_pdf_row_editor_filename(filename, page_number, card_no),
+                        editor_mime_type=OUTPUT_MIME_TYPE,
+                        editor_metadata={
+                            "source_type": "pdf_timecard_row_editor",
+                            "source_filename": filename,
+                            "source_page": page_number,
+                            "source_card_no": card_no,
+                            "source_editor_key": f"{filename}:page:{page_number}:card:{card_no}",
+                            "source_editor_size": {"width": row_image.width, "height": row_image.height},
                         },
                     )
                 )
@@ -378,6 +412,140 @@ def _prepare_oil_street_pdf_timecard_sources(
         source.metadata["source_part_count"] = len(sources)
         source.preprocessing["source_part_count"] = len(sources)
     return sources
+
+
+def recrop_oil_street_timecard_source(
+    editor_file_bytes: bytes,
+    *,
+    source_filename: str,
+    filename: str,
+    crop_box: dict[str, Any],
+    metadata: dict[str, Any],
+    staff_name: str,
+    card_no: int,
+    enabled: bool,
+) -> PreparedOcrSource:
+    try:
+        image = Image.open(BytesIO(editor_file_bytes))
+        image = ImageOps.exif_transpose(image)
+        image = _to_rgb_on_white(image)
+    except (OSError, UnidentifiedImageError, ValueError) as exc:
+        raise ValueError("整排打卡紙預覽無法讀取，請重新上傳 PDF。") from exc
+
+    normalized_box = _validated_manual_crop_box(crop_box, image.width, image.height)
+    box_tuple = (
+        normalized_box["left"],
+        normalized_box["top"],
+        normalized_box["right"],
+        normalized_box["bottom"],
+    )
+    crop = image.crop(box_tuple)
+    crop_bytes = _image_to_jpeg_bytes(crop)
+    processed, output_mime, preprocessing = prepare_ocr_image(
+        crop_bytes,
+        filename,
+        mime_type=OUTPUT_MIME_TYPE,
+        enabled=enabled,
+    )
+    updated_metadata = {
+        **metadata,
+        "source_type": "pdf_timecard_card",
+        "source_staff_label": staff_name,
+        "source_staff_name_hint": staff_name,
+        "source_staff_name_resolved": True,
+        "source_card_no": card_no,
+        "source_crop_box": normalized_box,
+        "source_crop_size": {"width": crop.width, "height": crop.height},
+        "source_split_method": "manual_crop",
+        "source_split_status": "corrected",
+        "source_split_score": 100,
+        "source_split_reasons": [],
+        "source_manual_reviewed": True,
+    }
+    updated_metadata.pop("source_preview_path", None)
+    preprocessing.update(
+        {
+            "split_applied": True,
+            "source_filename": source_filename,
+            "source_part_filename": filename,
+            "source_card_no": card_no,
+            "source_crop_box": normalized_box,
+            "source_crop_size": {"width": crop.width, "height": crop.height},
+            "source_split_method": "manual_crop",
+            "source_split_status": "corrected",
+        }
+    )
+    return PreparedOcrSource(
+        file_bytes=processed,
+        filename=filename,
+        mime_type=output_mime,
+        source_filename=source_filename,
+        preprocessing=preprocessing,
+        metadata=updated_metadata,
+    )
+
+
+def _validated_manual_crop_box(
+    crop_box: dict[str, Any],
+    image_width: int,
+    image_height: int,
+) -> dict[str, int]:
+    if not isinstance(crop_box, dict):
+        raise ValueError("請在整排打卡紙上框選一張完整卡片。")
+    try:
+        left = round(float(crop_box.get("left")))
+        top = round(float(crop_box.get("top")))
+        right = round(float(crop_box.get("right")))
+        bottom = round(float(crop_box.get("bottom")))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("打卡紙裁切座標無效。") from exc
+    left = max(0, min(left, image_width))
+    right = max(0, min(right, image_width))
+    top = max(0, min(top, image_height))
+    bottom = max(0, min(bottom, image_height))
+    minimum_width = max(80, round(image_width * 0.04))
+    minimum_height = max(180, round(image_height * 0.25))
+    if right - left < minimum_width or bottom - top < minimum_height:
+        raise ValueError("裁切範圍太小，請框選一張完整打卡紙。")
+    return {"left": left, "top": top, "right": right, "bottom": bottom}
+
+
+def _timecard_split_quality(
+    bounds: list[tuple[int, int]],
+    index: int,
+    image_width: int,
+    split_method: str,
+    *,
+    staff_name_resolved: bool,
+) -> tuple[str, int, list[str]]:
+    reasons: list[str] = []
+    score = 96
+    if split_method == "color_extent_grid":
+        score = 78
+        reasons.append("未能逐張確認卡頭邊界，請檢查左右裁切。")
+    elif split_method == "equal_grid_fallback":
+        score = 52
+        reasons.append("只可按平均欄寬分割，卡片位置可能不準確。")
+    if not staff_name_resolved:
+        score = min(score, 55)
+        reasons.append("PDF 標題未能配對 Excel roster 員工。")
+    if 0 <= index < len(bounds) and bounds:
+        widths = sorted(right - left for left, right in bounds)
+        median_width = widths[len(widths) // 2]
+        crop_width = bounds[index][1] - bounds[index][0]
+        if median_width > 0 and not 0.78 <= crop_width / median_width <= 1.28:
+            score = min(score, 62)
+            reasons.append("卡片寬度與同一排其他卡片差異較大。")
+        if bounds[index][0] <= 0 or bounds[index][1] >= image_width:
+            score = min(score, 82)
+            reasons.append("卡片位於整排圖邊緣，請確認沒有被截走。")
+    status = "ready" if not reasons else "review"
+    return status, score, reasons
+
+
+def _pdf_row_editor_filename(filename: str, page_number: int, card_no: int) -> str:
+    path = Path(filename)
+    return f"{path.stem}__page_{page_number:02d}__card_{card_no}_row.jpg"
 
 
 def _pdf_page_staff_labels(page: Any, staff_names: list[str]) -> list[PdfStaffLabel]:

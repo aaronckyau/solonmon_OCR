@@ -240,10 +240,13 @@
         <section id="oilCardReviewPanel" class="oil-card-review" hidden>
           <div class="oil-card-toolbar">
             <div>
-              <p class="eyebrow">Oil Street timecards</p>
-              <h3>已分類打卡紙</h3>
+              <p class="eyebrow">Step 3A</p>
+              <h3>檢查打卡紙分割</h3>
             </div>
-            <div id="oilCardSummary" class="oil-card-summary">0 張</div>
+            <div class="oil-card-toolbar-actions">
+              <div id="oilCardSummary" class="oil-card-summary">0 張</div>
+              <button id="oilCardConfirmButton" type="button">確認分割並開始 OCR</button>
+            </div>
           </div>
           <div class="oil-card-workspace">
             <aside class="oil-card-files" aria-label="已分類員工打卡紙">
@@ -260,6 +263,7 @@
                   <small id="oilCardPreviewMeta">分類後選擇一位員工</small>
                 </div>
                 <div class="oil-card-preview-tools" aria-label="打卡紙圖片縮放">
+                  <button id="oilCardEditButton" type="button" class="secondary">重新框選</button>
                   <button id="oilCardZoomOutButton" type="button" class="secondary" title="縮小" aria-label="縮小">-</button>
                   <span id="oilCardZoomValue">100%</span>
                   <button id="oilCardZoomInButton" type="button" class="secondary" title="放大" aria-label="放大">+</button>
@@ -269,6 +273,38 @@
               <div id="oilCardPreviewStage" class="oil-card-preview-stage">
                 <img id="oilCardPreviewImage" alt="已分類員工打卡紙" hidden>
                 <div id="oilCardPreviewEmpty" class="logsheet-empty">上傳並分類 PDF 後會在這裡預覽。</div>
+              </div>
+              <div id="oilCardCropEditor" class="oil-card-crop-editor" hidden>
+                <div class="oil-card-editor-fields">
+                  <label>
+                    <span>Excel roster 員工</span>
+                    <select id="oilCardStaffSelect"></select>
+                  </label>
+                  <label>
+                    <span>卡片</span>
+                    <select id="oilCardNumberSelect">
+                      <option value="1">Card 1（1-15 日）</option>
+                      <option value="2">Card 2（16-31 日）</option>
+                    </select>
+                  </label>
+                  <div class="oil-card-editor-commands">
+                    <button id="oilCardCropResetButton" type="button" class="secondary">還原自動框線</button>
+                    <button id="oilCardCropCancelButton" type="button" class="secondary">取消</button>
+                    <button id="oilCardCropSaveButton" type="button">套用裁切</button>
+                  </div>
+                </div>
+                <div id="oilCardCropStage" class="oil-card-crop-stage">
+                  <div id="oilCardCropSurface" class="oil-card-crop-surface">
+                    <img id="oilCardCropImage" alt="整排打卡紙分割底圖">
+                    <div id="oilCardCropBox" class="oil-card-crop-box">
+                      <span class="oil-card-crop-handle is-nw" data-crop-handle="nw"></span>
+                      <span class="oil-card-crop-handle is-ne" data-crop-handle="ne"></span>
+                      <span class="oil-card-crop-handle is-sw" data-crop-handle="sw"></span>
+                      <span class="oil-card-crop-handle is-se" data-crop-handle="se"></span>
+                    </div>
+                  </div>
+                </div>
+                <p class="oil-card-editor-note">拖曳框線或四角控制點，保留一張完整 time card；左右不要包含相鄰員工的卡片。</p>
               </div>
             </section>
           </div>
