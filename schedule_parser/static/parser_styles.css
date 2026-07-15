@@ -2269,7 +2269,9 @@ h3 {
 
 .roster-detail-image-stage {
   display: grid;
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
   place-items: center;
+  height: clamp(320px, calc(100vh - 280px), 560px);
   min-height: 320px;
   overflow: hidden;
   padding: 10px;
@@ -2283,8 +2285,13 @@ h3 {
 }
 
 .roster-detail-image-stage img {
-  max-width: 100%;
-  max-height: 100%;
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  max-width: none;
+  max-height: none;
   object-fit: contain;
   transform-origin: center center;
   will-change: transform;
@@ -3147,6 +3154,11 @@ summary:hover {
 
   .roster-detail-workspace {
     grid-template-columns: 1fr;
+  }
+
+  .roster-detail-image-stage {
+    height: min(58vh, 460px);
+    min-height: 280px;
   }
 
   .detail-modal-head,

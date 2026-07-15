@@ -602,6 +602,19 @@ def test_logsheet_source_files_can_open_preview_from_review_ui():
     assert ".logsheet-file-name:hover" in styles
 
 
+def test_roster_detail_preview_fits_full_card_and_delete_uses_comparison_aliases():
+    root = Path(__file__).parents[1]
+    script = (root / "schedule_parser" / "static" / "parser_app.js").read_text(encoding="utf-8")
+    styles = (root / "schedule_parser" / "static" / "parser_styles.css").read_text(encoding="utf-8")
+
+    assert "function comparisonOcrAliasesForStaffDate" in script
+    assert "const aliases = comparisonOcrAliasesForStaffDate(staffName, date);" in script
+    assert "ocrRowMatchesStaffDate(row, staffName, date, aliases)" in script
+    assert "height: clamp(320px, calc(100vh - 280px), 560px);" in styles
+    assert "grid-template: minmax(0, 1fr) / minmax(0, 1fr);" in styles
+    assert "width: 100%;\n  height: 100%;\n  min-width: 0;\n  min-height: 0;\n  max-width: none;\n  max-height: none;\n  object-fit: contain;" in styles
+
+
 def test_roster_actual_inputs_accept_compact_time_and_paste_grid():
     script = (Path(__file__).parents[1] / "schedule_parser" / "static" / "parser_app.js").read_text(encoding="utf-8")
 

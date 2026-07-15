@@ -4525,7 +4525,8 @@ function setOcrActualInRows(rows, staffName, date, field, value) {
 
 async function deleteRosterActualRows(staffName, date) {
   const before = ocrRows();
-  const after = before.filter((row) => !ocrRowMatchesStaffDate(row, staffName, date));
+  const aliases = comparisonOcrAliasesForStaffDate(staffName, date);
+  const after = before.filter((row) => !ocrRowMatchesStaffDate(row, staffName, date, aliases));
   if (after.length === before.length) {
     setStatus("找不到可刪除的 Actual Row。", true);
     return;
@@ -4549,11 +4550,30 @@ function replaceOcrRows(rows) {
   }
 }
 
-function ocrRowMatchesStaffDate(row, staffName, date) {
+function comparisonOcrAliasesForStaffDate(staffName, date) {
+  const aliases = new Set([staffName]);
+  (state.comparison?.rows || []).forEach((row) => {
+    if (!row.has_actual || alignOcrDateToSchedule(row.date) !== date) return;
+    if (!sameStaffName(row.staff_name, staffName)) return;
+    [row.ocr_name, row.assigned_staff_name, row.source_staff_name_hint]
+      .map((name) => String(name || "").trim())
+      .filter(Boolean)
+      .forEach((name) => aliases.add(name));
+  });
+  return [...aliases];
+}
+
+function ocrRowMatchesStaffDate(row, staffName, date, aliases = [staffName]) {
   if (alignOcrDateToSchedule(row.date) !== date) return false;
-  return sameStaffName(row.name, staffName)
-    || sameStaffName(row.assigned_staff_name, staffName)
-    || sameStaffName(staffNameFromFilename(row.source_filename), staffName);
+  const rowNames = [
+    row.name,
+    row.ocr_name,
+    row.original_name,
+    row.staff_name,
+    row.assigned_staff_name,
+    staffNameFromFilename(row.source_filename),
+  ].filter(Boolean);
+  return aliases.some((alias) => rowNames.some((name) => sameStaffName(name, alias)));
 }
 
 function alignOcrDateToSchedule(value) {
