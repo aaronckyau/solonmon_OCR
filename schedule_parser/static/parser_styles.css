@@ -948,6 +948,7 @@ h3 {
 }
 
 .oil-card-preview-stage {
+  position: relative;
   display: grid;
   place-items: center;
   height: 470px;
@@ -963,6 +964,11 @@ h3 {
 }
 
 .oil-card-preview-stage img {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
   max-width: 100%;
   max-height: 100%;
   cursor: grab;

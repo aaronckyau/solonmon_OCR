@@ -7,7 +7,15 @@ from pathlib import Path
 import re
 from typing import Any
 
-from PIL import Image, ImageEnhance, ImageFilter, ImageOps, UnidentifiedImageError
+from PIL import (
+    Image,
+    ImageDraw,
+    ImageEnhance,
+    ImageFilter,
+    ImageFont,
+    ImageOps,
+    UnidentifiedImageError,
+)
 
 
 SUPPORTED_IMAGE_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
@@ -17,6 +25,7 @@ MAX_LONG_EDGE = 2800
 MAX_UPSCALE_FACTOR = 2.0
 PDF_CARD_MIN_WIDTH = 900
 PDF_CARD_MAX_UPSCALE_FACTOR = 4.0
+PDF_CARD_MAX_LONG_EDGE = 4000
 DUAL_CARD_MIN_ASPECT_RATIO = 0.82
 PDF_MIME_TYPE = "application/pdf"
 PDF_LABEL_FONT_MIN = 13.0
@@ -50,6 +59,7 @@ def prepare_ocr_image(
     *,
     mime_type: str | None = None,
     enabled: bool = True,
+    max_long_edge: int = MAX_LONG_EDGE,
 ) -> tuple[bytes, str | None, dict[str, Any]]:
     """Return bytes/mime for OCR plus preprocessing metadata.
 
@@ -73,7 +83,10 @@ def prepare_ocr_image(
         return file_bytes, normalized_mime, metadata
 
     try:
-        enhanced_bytes, details = enhance_logsheet_image(file_bytes)
+        enhanced_bytes, details = enhance_logsheet_image(
+            file_bytes,
+            max_long_edge=max_long_edge,
+        )
     except (OSError, UnidentifiedImageError, ValueError) as exc:
         metadata["reason"] = "enhancement_failed"
         metadata["error"] = str(exc)
@@ -208,13 +221,17 @@ def prepare_oil_street_timecard_sources(
     return sources
 
 
-def enhance_logsheet_image(file_bytes: bytes) -> tuple[bytes, dict[str, Any]]:
+def enhance_logsheet_image(
+    file_bytes: bytes,
+    *,
+    max_long_edge: int = MAX_LONG_EDGE,
+) -> tuple[bytes, dict[str, Any]]:
     image = Image.open(BytesIO(file_bytes))
     image = ImageOps.exif_transpose(image)
     image = _to_rgb_on_white(image)
     original_size = image.size
 
-    image, scale_factor = _resize_for_ocr(image)
+    image, scale_factor = _resize_for_ocr(image, max_long_edge=max_long_edge)
     image = ImageOps.autocontrast(image, cutoff=0.5)
     image = ImageEnhance.Contrast(image).enhance(1.12)
     image = ImageEnhance.Sharpness(image).enhance(1.35)
@@ -232,14 +249,18 @@ def enhance_logsheet_image(file_bytes: bytes) -> tuple[bytes, dict[str, Any]]:
     }
 
 
-def _resize_for_ocr(image: Image.Image) -> tuple[Image.Image, float]:
+def _resize_for_ocr(
+    image: Image.Image,
+    *,
+    max_long_edge: int = MAX_LONG_EDGE,
+) -> tuple[Image.Image, float]:
     long_edge = max(image.size)
     if long_edge <= 0:
         raise ValueError("image has invalid dimensions")
     if long_edge < MIN_LONG_EDGE:
         scale = min(MIN_LONG_EDGE / long_edge, MAX_UPSCALE_FACTOR)
-    elif long_edge > MAX_LONG_EDGE:
-        scale = MAX_LONG_EDGE / long_edge
+    elif long_edge > max_long_edge:
+        scale = max_long_edge / long_edge
     else:
         scale = 1.0
     if abs(scale - 1.0) < 0.001:
@@ -305,13 +326,31 @@ def _prepare_oil_street_pdf_timecard_sources(
         labels = _pdf_page_staff_labels(page, staff_names)
         if len(labels) < 2:
             continue
-        row_images = _pdf_page_timecard_row_images(page)
-        if not row_images:
+        raw_row_images = _pdf_page_timecard_row_images(page)
+        if not raw_row_images:
             continue
         row_crop_plans = {
             card_no: _timecard_row_crop_plan(row_image, len(labels), card_no)
-            for card_no, row_image in row_images.items()
+            for card_no, row_image in raw_row_images.items()
         }
+        row_images: dict[int, Image.Image] = {}
+        row_label_band_heights: dict[int, int] = {}
+        row_vertical_crop_boxes: dict[int, dict[str, int]] = {}
+        for card_no, row_image in raw_row_images.items():
+            column_bounds, _split_method = row_crop_plans[card_no]
+            row_image, vertical_crop_box = _timecard_row_card_area(
+                row_image,
+                column_bounds,
+                card_no,
+            )
+            labeled_row, label_band_height = _timecard_row_with_roster_labels(
+                row_image,
+                labels,
+                column_bounds,
+            )
+            row_images[card_no] = labeled_row
+            row_label_band_heights[card_no] = label_band_height
+            row_vertical_crop_boxes[card_no] = vertical_crop_box
         row_editor_bytes = {
             card_no: _image_to_jpeg_bytes(row_image)
             for card_no, row_image in row_images.items()
@@ -334,6 +373,7 @@ def _prepare_oil_street_pdf_timecard_sources(
                     card_no,
                     column_bounds=column_bounds,
                     column_split_method=column_split_method,
+                    include_label_band=True,
                 )
                 crop_size = {"width": card.width, "height": card.height}
                 card_scale_factor = 1.0
@@ -346,6 +386,7 @@ def _prepare_oil_street_pdf_timecard_sources(
                     part_filename,
                     mime_type=OUTPUT_MIME_TYPE,
                     enabled=enabled,
+                    max_long_edge=PDF_CARD_MAX_LONG_EDGE,
                 )
                 preprocessing.update(
                     {
@@ -364,6 +405,9 @@ def _prepare_oil_street_pdf_timecard_sources(
                         "source_split_status": split_status,
                         "source_split_score": split_score,
                         "source_split_reasons": split_reasons,
+                        "source_roster_label_band": True,
+                        "source_roster_label_band_height": row_label_band_heights[card_no],
+                        "source_editor_vertical_crop": row_vertical_crop_boxes[card_no],
                         "pdf_card_scale_factor": round(card_scale_factor, 3),
                     }
                 )
@@ -389,6 +433,9 @@ def _prepare_oil_street_pdf_timecard_sources(
                             "source_split_status": split_status,
                             "source_split_score": split_score,
                             "source_split_reasons": split_reasons,
+                            "source_roster_label_band": True,
+                            "source_roster_label_band_height": row_label_band_heights[card_no],
+                            "source_editor_vertical_crop": row_vertical_crop_boxes[card_no],
                             "source_editor_key": f"{filename}:page:{page_number}:card:{card_no}",
                             "source_editor_size": {"width": row_image.width, "height": row_image.height},
                         },
@@ -400,6 +447,9 @@ def _prepare_oil_street_pdf_timecard_sources(
                             "source_filename": filename,
                             "source_page": page_number,
                             "source_card_no": card_no,
+                            "source_roster_label_band": True,
+                            "source_roster_label_band_height": row_label_band_heights[card_no],
+                            "source_editor_vertical_crop": row_vertical_crop_boxes[card_no],
                             "source_editor_key": f"{filename}:page:{page_number}:card:{card_no}",
                             "source_editor_size": {"width": row_image.width, "height": row_image.height},
                         },
@@ -650,6 +700,112 @@ def _pdf_page_timecard_row_images(page: Any) -> dict[int, Image.Image]:
     return {1: candidates[blue_index][0], 2: candidates[orange_index][0]}
 
 
+def _timecard_row_with_roster_labels(
+    image: Image.Image,
+    labels: list[PdfStaffLabel],
+    column_bounds: list[tuple[int, int]],
+) -> tuple[Image.Image, int]:
+    """Add the canonical PDF roster labels above the embedded card row.
+
+    The all-staff PDF stores employee names as a separate text layer, outside
+    the embedded card image. Adding a label band keeps that authoritative name
+    attached to the card during preview, manual recropping, and OCR.
+    """
+    label_band_height = max(56, min(96, round(image.height * 0.085)))
+    labeled = Image.new("RGB", (image.width, image.height + label_band_height), "white")
+    labeled.paste(image, (0, label_band_height))
+    draw = ImageDraw.Draw(labeled)
+    divider_width = max(1, round(image.width / 1600))
+    draw.line(
+        (0, label_band_height - divider_width, image.width, label_band_height - divider_width),
+        fill=(184, 194, 205),
+        width=divider_width,
+    )
+
+    for index, staff_label in enumerate(labels):
+        if index >= len(column_bounds):
+            break
+        left, right = column_bounds[index]
+        if index:
+            draw.line(
+                (left, 0, left, label_band_height),
+                fill=(224, 229, 235),
+                width=divider_width,
+            )
+        text = staff_label.roster_name or staff_label.raw_label
+        font = _fit_timecard_roster_label_font(
+            draw,
+            text,
+            max_width=max(1, right - left - 12),
+            max_height=label_band_height - 12,
+        )
+        text_box = draw.textbbox((0, 0), text, font=font)
+        text_width = text_box[2] - text_box[0]
+        text_height = text_box[3] - text_box[1]
+        x = left + max(6, (right - left - text_width) / 2)
+        y = max(4, (label_band_height - text_height) / 2 - text_box[1])
+        draw.text((x, y), text, font=font, fill=(22, 31, 44))
+
+    return labeled, label_band_height
+
+
+def _timecard_row_card_area(
+    image: Image.Image,
+    column_bounds: list[tuple[int, int]],
+    card_no: int,
+) -> tuple[Image.Image, dict[str, int]]:
+    """Trim row-level background while preserving every complete timecard."""
+    widths = sorted(right - left for left, right in column_bounds if right > left)
+    if not widths:
+        crop_box = {"left": 0, "top": 0, "right": image.width, "bottom": image.height}
+        return image, crop_box
+
+    typical_width = widths[len(widths) // 2]
+    header_top = _timecard_header_top(image, card_no)
+    top_margin = max(8, round(typical_width * 0.06))
+    crop_top = max(0, header_top - top_margin)
+    expected_height = max(round(typical_width * 2.7), round(image.height * 0.5))
+    crop_bottom = min(image.height, crop_top + expected_height)
+    if crop_bottom - crop_top < min(image.height, round(typical_width * 1.8)):
+        crop_top = 0
+        crop_bottom = image.height
+    crop_box = {
+        "left": 0,
+        "top": crop_top,
+        "right": image.width,
+        "bottom": crop_bottom,
+    }
+    return image.crop((0, crop_top, image.width, crop_bottom)), crop_box
+
+
+def _fit_timecard_roster_label_font(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    *,
+    max_width: int,
+    max_height: int,
+) -> ImageFont.ImageFont | ImageFont.FreeTypeFont:
+    start_size = max(10, min(26, round(max_height * 0.5)))
+    for size in range(start_size, 8, -1):
+        font = _timecard_roster_label_font(size)
+        bounds = draw.textbbox((0, 0), text, font=font)
+        if bounds[2] - bounds[0] <= max_width and bounds[3] - bounds[1] <= max_height:
+            return font
+    return _timecard_roster_label_font(9)
+
+
+def _timecard_roster_label_font(size: int) -> ImageFont.ImageFont | ImageFont.FreeTypeFont:
+    for font_name in ("Arial.ttf", "DejaVuSans.ttf"):
+        try:
+            return ImageFont.truetype(font_name, size=size)
+        except OSError:
+            continue
+    try:
+        return ImageFont.load_default(size=size)
+    except TypeError:
+        return ImageFont.load_default()
+
+
 def _timecard_color_scores(image: Image.Image) -> tuple[int, int]:
     sample, _scale = _resize_for_detection(image)
     pixels = sample.load()
@@ -676,6 +832,7 @@ def _crop_timecard_from_row(
     *,
     column_bounds: list[tuple[int, int]] | None = None,
     column_split_method: str | None = None,
+    include_label_band: bool = False,
 ) -> tuple[Image.Image, dict[str, int], str]:
     if _timecard_crop_bounds_are_plausible(column_bounds or [], image.width, count):
         bounds = column_bounds or []
@@ -692,8 +849,11 @@ def _crop_timecard_from_row(
         crop_left = max(0, round(left + index * pitch) - overlap)
         crop_right = min(image.width, round(left + (index + 1) * pitch) + overlap)
     pitch = crop_right - crop_left
-    header_top = _timecard_header_top(image, card_no)
-    crop_top = max(0, header_top - max(8, round(pitch * 0.08)))
+    if include_label_band:
+        crop_top = 0
+    else:
+        header_top = _timecard_header_top(image, card_no)
+        crop_top = max(0, header_top - max(8, round(pitch * 0.08)))
     crop_bottom = image.height
     crop_box = (crop_left, crop_top, crop_right, crop_bottom)
     return image.crop(crop_box), {
@@ -920,7 +1080,7 @@ def _resize_pdf_timecard_for_ocr(image: Image.Image) -> tuple[Image.Image, float
     if image.width <= 0 or long_edge <= 0:
         raise ValueError("PDF timecard crop has invalid dimensions")
     scale = max(MIN_LONG_EDGE / long_edge, PDF_CARD_MIN_WIDTH / image.width, 1.0)
-    scale = min(scale, PDF_CARD_MAX_UPSCALE_FACTOR, MAX_LONG_EDGE / long_edge)
+    scale = min(scale, PDF_CARD_MAX_UPSCALE_FACTOR, PDF_CARD_MAX_LONG_EDGE / long_edge)
     if scale <= 1.001:
         return image, 1.0
     size = (max(1, round(image.width * scale)), max(1, round(image.height * scale)))

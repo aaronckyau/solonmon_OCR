@@ -426,6 +426,7 @@ def test_oil_street_card_review_supports_prepare_preview_and_part_ocr():
     assert 'id="oilCardEditButton"' in body
     assert 'id="oilCardCropEditor"' in body
     assert 'id="oilCardStaffSelect"' in body
+    assert "框選上方 Excel roster 姓名及下方完整 time card" in body
     assert 'fetch(apiUrl("/api/prepare-logsheet")' in script
     assert 'fetch(apiUrl(`/api/ocr-logsheet-part/${encodeURIComponent(part.previewId)}`)' in script
     assert 'fetch(apiUrl(`/api/ocr-preview/${encodeURIComponent(file.previewId)}/recrop`)' in script
@@ -439,10 +440,14 @@ def test_oil_street_card_review_supports_prepare_preview_and_part_ocr():
     )[0]
     assert "runPreparedOcrWorkers" not in prepare_flow
     assert "function renderOilCardReview" in script
+    assert 'oilCardPreviewImage?.addEventListener("load", resetOilCardImageView)' in script
+    assert "els.oilCardPreviewImage.dataset.previewId !== file.previewId" in script
     assert "function reviewLogsheetFiles" in script
     assert "function sourcePreviewFilenamesForRow" in script
     assert ".oil-card-workspace" in styles
     assert ".oil-card-preview-stage" in styles
+    assert ".oil-card-preview-stage img {\n  position: absolute;\n  inset: 0;\n  display: block;" in styles
+    assert "  width: 100%;\n  height: 100%;" in styles
     assert ".oil-card-crop-box" in styles
     assert ".oil-card-item.is-done" in styles
 

@@ -8,8 +8,10 @@ import pytest
 
 from schedule_parser.image_enhancement import (
     OUTPUT_MIME_TYPE,
+    PdfStaffLabel,
     _match_staff_label,
     _timecard_column_crop_bounds,
+    _timecard_row_with_roster_labels,
     prepare_ocr_image,
     prepare_oil_street_timecard_sources,
 )
@@ -132,6 +134,25 @@ def test_prepare_oil_street_timecard_sources_keeps_single_vertical_card():
     assert sources[0].metadata["source_type"] == "single"
 
 
+def test_timecard_row_roster_band_uses_canonical_names():
+    row = Image.new("RGB", (600, 800), "white")
+    labels = [
+        PdfStaffLabel(raw_label="Johnny", roster_name="Au Kin Wai Johnny", x=0),
+        PdfStaffLabel(raw_label="Nicole", roster_name="Chui Chung Yan Nicole", x=300),
+    ]
+
+    labeled, band_height = _timecard_row_with_roster_labels(
+        row,
+        labels,
+        [(0, 300), (300, 600)],
+    )
+
+    assert labeled.size == (600, 800 + band_height)
+    assert 56 <= band_height <= 96
+    label_band = labeled.crop((0, 0, labeled.width, band_height))
+    assert label_band.convert("L").getextrema()[0] < 100
+
+
 def test_prepare_oil_street_all_staff_pdf_splits_one_source_per_card():
     sample = (
         Path(__file__).parents[1]
@@ -158,6 +179,10 @@ def test_prepare_oil_street_all_staff_pdf_splits_one_source_per_card():
     assert all(source.editor_file_bytes for source in sources)
     assert all(source.editor_filename for source in sources)
     assert all(source.metadata["source_editor_size"]["width"] > 0 for source in sources)
+    assert all(source.metadata["source_roster_label_band"] is True for source in sources)
+    assert all(source.metadata["source_roster_label_band_height"] > 0 for source in sources)
+    assert all(source.metadata["source_crop_box"]["top"] == 0 for source in sources)
+    assert sources[0].metadata["source_editor_vertical_crop"]["top"] > 0
     assert all(source.metadata["source_split_status"] in {"ready", "review"} for source in sources)
     assert all(0 <= source.metadata["source_split_score"] <= 100 for source in sources)
     assert [source.metadata["source_page"] for source in sources] == [
@@ -212,7 +237,7 @@ def test_prepare_oil_street_pdf_problem_cards_keep_complete_width_and_height():
     ]
     assert len(targets) == 4
     assert all(source.preprocessing["source_crop_size"]["width"] >= 230 for source in targets)
-    assert all(source.preprocessing["source_crop_size"]["height"] >= 820 for source in targets)
+    assert all(source.preprocessing["source_crop_size"]["height"] >= 700 for source in targets)
     assert all(source.metadata["source_split_method"] == "color_extent_grid" for source in targets)
 
 

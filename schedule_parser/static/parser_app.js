@@ -405,6 +405,7 @@ els.oilCardCropReset?.addEventListener("click", resetOilCardCropDraft);
 els.oilCardCropCancel?.addEventListener("click", cancelOilCardCropEditing);
 els.oilCardCropSave?.addEventListener("click", saveOilCardCrop);
 els.oilCardCropImage?.addEventListener("load", fitOilCardCropSurface);
+els.oilCardPreviewImage?.addEventListener("load", resetOilCardImageView);
 els.oilCardCropStage?.addEventListener("pointerdown", handleOilCardCropPointerDown);
 els.oilCardCropStage?.addEventListener("pointermove", handleOilCardCropPointerMove);
 els.oilCardCropStage?.addEventListener("pointerup", endOilCardCropDrag);
@@ -1313,13 +1314,19 @@ function renderOilCardPreview(file) {
   if (editingThisFile) {
     renderOilCardCropEditor(file);
   } else if (file?.previewUrl) {
-    els.oilCardPreviewImage.src = file.previewUrl;
+    const previewChanged = els.oilCardPreviewImage.dataset.previewId !== file.previewId;
+    if (previewChanged) {
+      resetOilCardImageView();
+      els.oilCardPreviewImage.dataset.previewId = file.previewId;
+      els.oilCardPreviewImage.src = file.previewUrl;
+    }
     els.oilCardPreviewImage.draggable = false;
     els.oilCardPreviewImage.hidden = false;
     els.oilCardPreviewEmpty.hidden = true;
     applyOilCardTransform();
   } else {
     els.oilCardPreviewImage.removeAttribute("src");
+    delete els.oilCardPreviewImage.dataset.previewId;
     els.oilCardPreviewImage.hidden = true;
     els.oilCardPreviewEmpty.hidden = false;
     els.oilCardPreviewEmpty.textContent = "這張打卡紙沒有可顯示的圖片預覽。";
