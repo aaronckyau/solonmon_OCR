@@ -920,7 +920,14 @@ h3 {
   background: #ffffff;
 }
 
-.oil-card-preview-head > div:first-child {
+.oil-card-preview-primary {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.oil-card-preview-title {
   min-width: 0;
   display: grid;
   gap: 2px;
@@ -1011,6 +1018,11 @@ h3 {
 .oil-card-editor-fields select {
   min-height: 36px;
   padding: 6px 9px;
+}
+
+#oilCardCropSaveButton {
+  min-height: 36px;
+  flex: 0 0 auto;
 }
 
 .oil-card-editor-commands {
@@ -3075,6 +3087,15 @@ summary:hover {
 
   .oil-card-editor-fields label {
     min-width: 0;
+  }
+
+  .oil-card-preview-primary {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  #oilCardCropSaveButton {
+    align-self: flex-start;
   }
 
   .oil-card-editor-commands {

@@ -258,12 +258,14 @@
             </aside>
             <section class="oil-card-preview">
               <div class="oil-card-preview-head">
-                <div>
-                  <strong id="oilCardPreviewTitle">未選擇</strong>
-                  <small id="oilCardPreviewMeta">分類後選擇一位員工</small>
+                <div class="oil-card-preview-primary">
+                  <button id="oilCardEditButton" type="button" class="secondary">重新框選</button>
+                  <div class="oil-card-preview-title">
+                    <strong id="oilCardPreviewTitle">未選擇</strong>
+                    <small id="oilCardPreviewMeta">分類後選擇一位員工</small>
+                  </div>
                 </div>
                 <div class="oil-card-preview-tools" aria-label="打卡紙圖片縮放">
-                  <button id="oilCardEditButton" type="button" class="secondary">重新框選</button>
                   <button id="oilCardZoomOutButton" type="button" class="secondary" title="縮小" aria-label="縮小">-</button>
                   <span id="oilCardZoomValue">100%</span>
                   <button id="oilCardZoomInButton" type="button" class="secondary" title="放大" aria-label="放大">+</button>
@@ -276,6 +278,7 @@
               </div>
               <div id="oilCardCropEditor" class="oil-card-crop-editor" hidden>
                 <div class="oil-card-editor-fields">
+                  <button id="oilCardCropSaveButton" type="button">套用裁切</button>
                   <label>
                     <span>Excel roster 員工</span>
                     <select id="oilCardStaffSelect"></select>
@@ -290,7 +293,6 @@
                   <div class="oil-card-editor-commands">
                     <button id="oilCardCropResetButton" type="button" class="secondary">還原自動框線</button>
                     <button id="oilCardCropCancelButton" type="button" class="secondary">取消</button>
-                    <button id="oilCardCropSaveButton" type="button">套用裁切</button>
                   </div>
                 </div>
                 <div id="oilCardCropStage" class="oil-card-crop-stage">

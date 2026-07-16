@@ -436,6 +436,15 @@ def test_oil_street_card_review_supports_prepare_preview_and_part_ocr():
     assert 'id="oilCardEditButton"' in body
     assert 'id="oilCardCropEditor"' in body
     assert 'id="oilCardStaffSelect"' in body
+    preview_header = body.split('class="oil-card-preview-head"', 1)[1].split(
+        'id="oilCardPreviewStage"', 1
+    )[0]
+    crop_fields = body.split('class="oil-card-editor-fields"', 1)[1].split(
+        'id="oilCardCropStage"', 1
+    )[0]
+    assert 'class="oil-card-preview-primary"' in preview_header
+    assert preview_header.index('id="oilCardEditButton"') < preview_header.index('id="oilCardPreviewTitle"')
+    assert crop_fields.index('id="oilCardCropSaveButton"') < crop_fields.index('id="oilCardStaffSelect"')
     assert "框選上方 Excel roster 姓名及下方完整 time card" in body
     assert 'fetch(apiUrl("/api/prepare-logsheet")' in script
     assert 'fetch(apiUrl(`/api/ocr-logsheet-part/${encodeURIComponent(part.previewId)}`)' in script
@@ -464,6 +473,8 @@ def test_oil_street_card_review_supports_prepare_preview_and_part_ocr():
     assert ".oil-card-crop-editor {\n  display: grid;" in styles
     assert ".oil-card-preview-stage img {\n  position: absolute;\n  inset: 0;\n  display: block;" in styles
     assert "  width: 100%;\n  height: 100%;" in styles
+    assert ".oil-card-preview-primary" in styles
+    assert "#oilCardCropSaveButton" in styles
     assert ".oil-card-crop-box" in styles
     assert ".oil-card-item.is-done" in styles
 
