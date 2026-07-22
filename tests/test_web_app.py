@@ -639,6 +639,34 @@ def test_roster_actual_inputs_accept_compact_time_and_paste_grid():
     assert "11:42 或 1142" in script
 
 
+def test_roster_actual_rows_use_explicit_save_and_stable_ids():
+    root = Path(__file__).parents[1]
+    script = (root / "schedule_parser" / "static" / "parser_app.js").read_text(encoding="utf-8")
+
+    assert "function ensureActualRowId" in script
+    assert "function saveRosterActualRow" in script
+    assert "function deleteRosterActualRowsById" in script
+    assert 'data-roster-action="save"' in script
+    assert "actualRowIds" in script
+    assert "state.rosterActualDraft" in script
+    assert "function rosterActualDraftRowHtml" in script
+    assert "addFirstMissingRosterActualRow" in script
+    assert "rows.push({\n    name: staffName,\n    date,\n    in: \"\",\n    out: \"\"" not in script
+
+
+def test_public_holiday_columns_use_neutral_backgrounds():
+    styles = (Path(__file__).parents[1] / "schedule_parser" / "static" / "parser_styles.css").read_text(encoding="utf-8")
+
+    ph_blocks = [
+        styles.split(".roster-metric-cell.is-ph", 1)[1].split("}", 1)[0],
+        styles.split(".entries-head-group.is-ph", 1)[1].split("}", 1)[0],
+        styles.split(".entries-metric-head.is-ph", 1)[1].split("}", 1)[0],
+    ]
+    assert all("background:" not in block for block in ph_blocks)
+    assert "tbody td:nth-child(5) {\n  background:" not in styles
+    assert "tbody tr:hover td:nth-child(5)" not in styles
+
+
 def test_public_holiday_years_are_selectable_and_data_backed():
     root = Path(__file__).parents[1]
     body = (root / "schedule_parser" / "templates" / "parser_index.html").read_text(encoding="utf-8")

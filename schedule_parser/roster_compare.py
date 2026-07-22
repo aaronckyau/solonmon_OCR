@@ -233,6 +233,8 @@ def _normalize_actual_row(row: dict[str, Any], schedule_dates: set[str]) -> dict
     if all_times:
         all_times = sorted(set(all_times), key=_time_minutes_safe)
     return {
+        "actual_row_id": _clean_text(row.get("actual_row_id")),
+        "actual_row_ids": [str(item) for item in row.get("actual_row_ids") or [] if item],
         "ocr_name": _clean_text(row.get("ocr_name") or row.get("original_name") or row.get("name") or row.get("staff_name")),
         "assigned_staff_name": _clean_text(row.get("assigned_staff_name")),
         "staff_name": "",
@@ -329,6 +331,11 @@ def _name_score(query_key: str, candidate_key: str, query_name: str, candidate_n
 
 
 def _merge_actual(target: dict[str, Any], source: dict[str, Any]) -> None:
+    for actual_row_id in source.get("actual_row_ids") or [source.get("actual_row_id")]:
+        if actual_row_id and actual_row_id not in target.setdefault("actual_row_ids", []):
+            target["actual_row_ids"].append(actual_row_id)
+    if target.get("actual_row_ids") and not target.get("actual_row_id"):
+        target["actual_row_id"] = target["actual_row_ids"][0]
     times = _extract_times([target.get("all_times"), source.get("all_times"), target.get("actual_in"), target.get("actual_out")])
     if times:
         target["all_times"] = times
@@ -374,6 +381,8 @@ def _compare_entry(
 ) -> dict[str, Any]:
     row = {
         **entry,
+        "actual_row_id": actual.get("actual_row_id", "") if actual else "",
+        "actual_row_ids": actual.get("actual_row_ids", []) if actual else [],
         "ocr_name": actual.get("ocr_name", "") if actual else "",
         "actual_in": actual.get("actual_in", "") if actual else "",
         "actual_out": actual.get("actual_out", "") if actual else "",
@@ -500,6 +509,8 @@ def _append_name_flags(row: dict[str, Any], actual: dict[str, Any]) -> None:
 def _unscheduled_row(key: tuple[str, str], actual: dict[str, Any]) -> dict[str, Any]:
     identity_note = _identity_review_note(actual)
     return {
+        "actual_row_id": actual.get("actual_row_id", ""),
+        "actual_row_ids": actual.get("actual_row_ids", []),
         "staff_name": key[0],
         "staff_id": actual.get("staff_id", ""),
         "phone_last4": actual.get("phone_last4", ""),
@@ -553,6 +564,8 @@ def _unmatched_actual_row(actual: dict[str, Any]) -> dict[str, Any]:
     if status == "Date Not Matched":
         flags.append("Date Check")
     return {
+        "actual_row_id": actual.get("actual_row_id", ""),
+        "actual_row_ids": actual.get("actual_row_ids", []),
         "staff_name": actual.get("staff_name", ""),
         "staff_id": actual.get("staff_id", ""),
         "phone_last4": actual.get("phone_last4", ""),

@@ -430,3 +430,32 @@ def test_explicit_out_without_in_stays_missing_in():
     assert matched["actual_in"] == ""
     assert matched["actual_out"] == "20:15"
     assert matched["status"] == "Missing In"
+
+
+def test_actual_row_ids_reach_scheduled_and_unscheduled_comparison_rows():
+    result = compare_schedule_to_ocr(
+        sample_schedule(),
+        [
+            {
+                "actual_row_id": "actual-scheduled",
+                "name": "Cheng Nuo Isla",
+                "date": "2025-08-20",
+                "in": "09:45",
+                "out": "20:15",
+            },
+            {
+                "actual_row_id": "actual-unscheduled",
+                "name": "Cheng Nuo Isla",
+                "date": "2025-08-22",
+                "in": "09:45",
+                "out": "18:45",
+            },
+        ],
+    )
+
+    scheduled = next(row for row in result["rows"] if row["date"] == "2025-08-20")
+    unscheduled = next(row for row in result["rows"] if row["date"] == "2025-08-22")
+    assert scheduled["actual_row_id"] == "actual-scheduled"
+    assert scheduled["actual_row_ids"] == ["actual-scheduled"]
+    assert unscheduled["actual_row_id"] == "actual-unscheduled"
+    assert unscheduled["actual_row_ids"] == ["actual-unscheduled"]

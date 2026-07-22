@@ -1841,7 +1841,6 @@ h3 {
 }
 
 .roster-metric-cell.is-ph {
-  background: #fffdf7;
   color: #7c2d12;
 }
 
@@ -2013,7 +2012,6 @@ h3 {
 
 .roster-shift-chip.is-public-holiday {
   border-color: #f7b955;
-  background: #fffbeb;
   color: #92400e;
 }
 
@@ -2024,7 +2022,6 @@ h3 {
 .roster-shift-chip.is-public-holiday small {
   padding: 1px 4px;
   border-radius: 999px;
-  background: #fef3c7;
   color: #92400e;
 }
 
@@ -2127,6 +2124,20 @@ h3 {
   padding: 6px 8px;
   border: 1px solid var(--border);
   border-radius: 6px;
+}
+
+.roster-detail-table input.roster-actual-date {
+  width: 132px;
+}
+
+.roster-detail-main.is-draft,
+.roster-detail-note.is-draft {
+  background: #f8fafc;
+}
+
+.roster-detail-main.is-dirty input[data-roster-field] {
+  border-color: #60a5fa;
+  background: #eff6ff;
 }
 
 .roster-actual-fields,
@@ -2498,7 +2509,6 @@ h3 {
 }
 
 .entries-head-group.is-ph {
-  background: linear-gradient(180deg, #fff7e6, #fff1d6);
   color: #92400e;
 }
 
@@ -2539,7 +2549,6 @@ h3 {
 }
 
 .entries-metric-head.is-ph {
-  background: #fffaf0;
   color: #92400e;
 }
 
@@ -2630,17 +2639,6 @@ h3 {
   text-align: right;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-}
-
-.entries-table table.is-holiday-split tbody td:nth-child(4),
-.entries-table table.is-holiday-split tbody td:nth-child(5) {
-  background: #fffdf7;
-  color: #7c2d12;
-}
-
-.entries-table table.is-holiday-split tbody tr:hover td:nth-child(4),
-.entries-table table.is-holiday-split tbody tr:hover td:nth-child(5) {
-  background: #fff7ed;
 }
 
 .entries-table table.is-month-split tbody td:nth-child(n+2) {

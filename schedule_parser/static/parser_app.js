@@ -182,6 +182,7 @@ const state = {
   currentStep: "project-select",
   scheduleConfirmed: false,
   selectedRosterStaff: "",
+  rosterActualDraft: null,
   logsheetFiles: [],
   ocrPreviewFiles: [],
   activeOilCardKey: "",
@@ -215,6 +216,7 @@ const state = {
 };
 
 let comparisonRequestId = 0;
+let actualRowSequence = 0;
 const oilCardPreviewPreloads = new Map();
 const oilCardPreviewCachedUrls = new Set();
 
@@ -3108,6 +3110,7 @@ function clearPage() {
   state.currentStep = "project-select";
   state.scheduleConfirmed = false;
   state.selectedRosterStaff = "";
+  state.rosterActualDraft = null;
   state.logsheetFiles = [];
   state.ocrPreviewFiles = [];
   state.activeOilCardKey = "";
@@ -4193,6 +4196,7 @@ function handleRosterKeydown(event) {
 function openRosterDetail(staffName, options = {}) {
   if (!staffName) return;
   if (state.selectedRosterStaff !== staffName) {
+    state.rosterActualDraft = null;
     state.rosterImageIndex = 0;
     state.rosterImageFileName = "";
     resetRosterImageView();
@@ -4208,6 +4212,7 @@ function openRosterDetail(staffName, options = {}) {
 }
 
 function closeRosterDetail() {
+  state.rosterActualDraft = null;
   if (els.rosterDetailModal) els.rosterDetailModal.hidden = true;
   if (els.rosterDetailRows) {
     els.rosterDetailRows.innerHTML = '<tr><td class="muted" colspan="6">請先在員工排班彙總選擇員工。</td></tr>';
@@ -4234,11 +4239,12 @@ function renderRosterDetail(staffName) {
   }
   if (els.rosterDetailAddRow) els.rosterDetailAddRow.disabled = !staffName;
   renderRosterDetailImage(staffName);
-  if (!detailRows.length) {
+  const draftHtml = state.rosterActualDraft?.staff === staffName ? rosterActualDraftRowHtml(state.rosterActualDraft) : "";
+  if (!detailRows.length && !draftHtml) {
     els.rosterDetailRows.innerHTML = '<tr><td class="muted" colspan="6">這位員工沒有排班或打卡資料。</td></tr>';
     return;
   }
-  els.rosterDetailRows.innerHTML = detailRows.map(rosterDetailRowHtml).join("");
+  els.rosterDetailRows.innerHTML = `${draftHtml}${detailRows.map(rosterDetailRowHtml).join("")}`;
 }
 
 function rosterStaffDetailRows(staffName) {
@@ -4267,6 +4273,7 @@ function rosterStaffDetailRows(staffName) {
         difference: detailDifferenceText(entry, compareRow),
         source: compareRow?.source_filename || (compareRow?.source_filenames || []).join(", ") || "",
         sourceFilenames: sourcePreviewFilenamesForRow(compareRow),
+        actualRowIds: comparisonActualRowIds(compareRow),
         canAdd: !compareRow?.has_actual,
         canDelete: Boolean(compareRow?.has_actual),
       });
@@ -4288,6 +4295,7 @@ function rosterStaffDetailRows(staffName) {
         difference: row.notes || "有打卡資料但 roster 沒有排班。",
         source: row.source_filename || (row.source_filenames || []).join(", ") || "",
         sourceFilenames: sourcePreviewFilenamesForRow(row),
+        actualRowIds: comparisonActualRowIds(row),
         canAdd: false,
         canDelete: true,
       });
@@ -4297,16 +4305,17 @@ function rosterStaffDetailRows(staffName) {
 
 function rosterDetailRowHtml(item) {
   const statusClass = `is-${escapeAttr(item.status || "pending")}`;
+  const actualRowIds = escapeAttr((item.actualRowIds || []).join("|"));
   const actualInputs = `
     <div class="roster-actual-fields">
-      <input type="text" inputmode="numeric" value="${escapeAttr(item.actualIn)}" placeholder="In" data-roster-field="in" data-staff="${escapeAttr(item.staff)}" data-date="${escapeAttr(item.date)}">
-      <input type="text" inputmode="numeric" value="${escapeAttr(item.actualOut)}" placeholder="Out" data-roster-field="out" data-staff="${escapeAttr(item.staff)}" data-date="${escapeAttr(item.date)}">
+      <input type="text" inputmode="numeric" value="${escapeAttr(item.actualIn)}" placeholder="In" data-roster-field="in" data-staff="${escapeAttr(item.staff)}" data-date="${escapeAttr(item.date)}" data-actual-row-ids="${actualRowIds}">
+      <input type="text" inputmode="numeric" value="${escapeAttr(item.actualOut)}" placeholder="Out" data-roster-field="out" data-staff="${escapeAttr(item.staff)}" data-date="${escapeAttr(item.date)}" data-actual-row-ids="${actualRowIds}">
     </div>
   `;
   const actions = item.canAdd
-    ? `<button type="button" class="mini-button" data-roster-action="add" data-staff="${escapeAttr(item.staff)}" data-date="${escapeAttr(item.date)}">新增</button>`
-    : `<button type="button" class="mini-button" data-roster-action="focus" data-staff="${escapeAttr(item.staff)}" data-date="${escapeAttr(item.date)}">修改</button>
-       <button type="button" class="mini-button danger" data-roster-action="delete" data-staff="${escapeAttr(item.staff)}" data-date="${escapeAttr(item.date)}">刪除</button>`;
+    ? `<button type="button" class="mini-button" data-roster-action="save" data-staff="${escapeAttr(item.staff)}" data-date="${escapeAttr(item.date)}" data-actual-row-ids="${actualRowIds}">新增</button>`
+    : `<button type="button" class="mini-button" data-roster-action="save" data-staff="${escapeAttr(item.staff)}" data-date="${escapeAttr(item.date)}" data-actual-row-ids="${actualRowIds}">儲存</button>
+       <button type="button" class="mini-button danger" data-roster-action="delete" data-staff="${escapeAttr(item.staff)}" data-date="${escapeAttr(item.date)}" data-actual-row-ids="${actualRowIds}">刪除</button>`;
   return `
     <tr class="roster-detail-main ${statusClass}">
       <td>${escapeHtml(formatScheduleDayOnly(item.date))}</td>
@@ -4319,6 +4328,30 @@ function rosterDetailRowHtml(item) {
     <tr class="roster-detail-note ${statusClass}">
       <td colspan="6">${escapeHtml(item.difference || "-")}${item.sourceFilenames?.length ? ` · ${sourceLinksHtml(item.sourceFilenames, item.staff)}` : ""}</td>
     </tr>
+  `;
+}
+
+function rosterActualDraftRowHtml(draft) {
+  return `
+    <tr class="roster-detail-main is-draft">
+      <td><input class="roster-actual-date" type="date" value="${escapeAttr(draft.date || "")}" data-roster-draft-date></td>
+      <td>未排班</td>
+      <td>-</td>
+      <td>
+        <div class="roster-actual-fields">
+          <input type="text" inputmode="numeric" value="${escapeAttr(draft.actualIn || "")}" placeholder="In" data-roster-draft-field="in">
+          <input type="text" inputmode="numeric" value="${escapeAttr(draft.actualOut || "")}" placeholder="Out" data-roster-draft-field="out">
+        </div>
+      </td>
+      <td><span class="roster-status-pill">待儲存</span></td>
+      <td>
+        <div class="roster-action-buttons">
+          <button type="button" class="mini-button" data-roster-action="save-draft" data-staff="${escapeAttr(draft.staff)}">儲存</button>
+          <button type="button" class="mini-button secondary" data-roster-action="cancel-draft">取消</button>
+        </div>
+      </td>
+    </tr>
+    <tr class="roster-detail-note is-draft"><td colspan="6">選擇日期並輸入至少一個實際時間。</td></tr>
   `;
 }
 
@@ -4358,10 +4391,9 @@ function detailDifferenceText(entry, row) {
   return parts.join("；") || `實際 ${row.actual_in || "-"}-${row.actual_out || "-"}，排班 ${scheduleWindowLabel(entry)}。`;
 }
 
-async function handleRosterDetailChange(event) {
+function handleRosterDetailChange(event) {
   const input = event.target.closest("[data-roster-field]");
   if (!input) return;
-  const field = input.dataset.rosterField;
   const value = normalizeManualActualTime(input.value);
   if (value === null) {
     setStatus("請輸入 HH:MM 或 3-4 位數時間，例如 11:42 或 1142。", true);
@@ -4369,7 +4401,7 @@ async function handleRosterDetailChange(event) {
     return;
   }
   input.value = value;
-  await setOcrActualForStaffDate(input.dataset.staff || state.selectedRosterStaff, input.dataset.date || "", field, value);
+  input.closest("tr")?.classList.add("is-dirty");
 }
 
 async function handleRosterDetailPaste(event) {
@@ -4389,7 +4421,20 @@ async function handleRosterDetailPaste(event) {
   edits.forEach((edit) => {
     edit.input.value = edit.value;
   });
-  await setOcrActualCells(edits.map(({ staff, date, field, value }) => ({ staff, date, field, value })));
+  await setOcrActualCells(edits.map(({ staff, date, field, value, actualRowIds }) => ({
+    staff,
+    date,
+    field,
+    value,
+    actualRowIds,
+  })));
+}
+
+function normalizedRosterInput(input) {
+  if (!input) return "";
+  const value = normalizeManualActualTime(input.value);
+  if (value !== null) input.value = value;
+  return value;
 }
 
 function parseManualActualTimeGrid(text) {
@@ -4426,6 +4471,7 @@ function rosterActualPasteEdits(startInput, grid) {
         date: targetInput.dataset.date || "",
         field: targetInput.dataset.rosterField,
         value,
+        actualRowIds: actualRowIdsFromElement(targetInput),
       });
     });
   });
@@ -4441,48 +4487,75 @@ async function handleRosterDetailClick(event) {
   if (!button) return;
   const staff = button.dataset.staff || state.selectedRosterStaff;
   const date = button.dataset.date || "";
-  if (button.dataset.rosterAction === "add") {
-    await addRosterActualRow(date, staff);
+  if (button.dataset.rosterAction === "save") {
+    await saveRosterActualRow(button);
     return;
   }
   if (button.dataset.rosterAction === "delete") {
-    await deleteRosterActualRows(staff, date);
+    await deleteRosterActualRowsById(staff, date, actualRowIdsFromElement(button));
     return;
   }
-  if (button.dataset.rosterAction === "focus") {
-    const row = button.closest("tr");
-    row?.querySelector("input[data-roster-field]")?.focus();
+  if (button.dataset.rosterAction === "save-draft") {
+    await saveRosterActualDraft();
+    return;
+  }
+  if (button.dataset.rosterAction === "cancel-draft") {
+    state.rosterActualDraft = null;
+    renderRosterDetail(state.selectedRosterStaff);
   }
 }
 
-async function addFirstMissingRosterActualRow() {
+function addFirstMissingRosterActualRow() {
   if (!state.selectedRosterStaff) return;
-  const target = rosterStaffDetailRows(state.selectedRosterStaff).find((row) => row.canAdd)
-    || rosterStaffDetailRows(state.selectedRosterStaff).find((row) => row.date);
-  await addRosterActualRow(target?.date || "", state.selectedRosterStaff);
+  state.rosterActualDraft = {
+    staff: state.selectedRosterStaff,
+    date: "",
+    actualIn: "",
+    actualOut: "",
+  };
+  renderRosterDetail(state.selectedRosterStaff);
+  els.rosterDetailRows?.querySelector("[data-roster-draft-date]")?.focus();
+  setStatus("請選擇日期並輸入實際時間，再按儲存。");
 }
 
-async function addRosterActualRow(date, staffName = state.selectedRosterStaff) {
-  if (!state.ocr) {
-    state.ocr = createOcrAggregate([]);
+async function saveRosterActualRow(button) {
+  const row = button.closest("tr.roster-detail-main");
+  const inputs = [...(row?.querySelectorAll("input[data-roster-field]") || [])];
+  const staffName = button.dataset.staff || state.selectedRosterStaff;
+  const date = button.dataset.date || "";
+  const actualIn = normalizedRosterInput(inputs.find((input) => input.dataset.rosterField === "in"));
+  const actualOut = normalizedRosterInput(inputs.find((input) => input.dataset.rosterField === "out"));
+  if (actualIn === null || actualOut === null || (!actualIn && !actualOut)) {
+    setStatus("請輸入至少一個有效時間，例如 11:42 或 1142。", true);
+    return;
   }
   const rows = ocrRows().slice();
-  rows.push({
-    name: staffName,
-    date,
-    in: "",
-    out: "",
-    source_filename: staffLogsheetFile(staffName)?.name || "manual",
-    source_filenames: [staffLogsheetFile(staffName)?.name || "manual"],
-    all_times: [],
-    warnings: ["人工新增 Actual Row"],
-  });
+  setOcrActualValuesInRows(rows, staffName, date, actualIn, actualOut, actualRowIdsFromElement(button));
   replaceOcrRows(rows);
-  await refreshAfterRosterActualEdit(`已新增 ${staffName} ${formatScheduleDayOnly(date)} 的 Actual Row。`);
+  await refreshAfterRosterActualEdit(`已儲存 ${staffName} ${formatScheduleDayOnly(date)} 的實際時間。`);
 }
 
-async function setOcrActualForStaffDate(staffName, date, field, value) {
-  await setOcrActualCells([{ staff: staffName, date, field, value }]);
+async function saveRosterActualDraft() {
+  const draftRow = els.rosterDetailRows?.querySelector("tr.roster-detail-main.is-draft");
+  const date = draftRow?.querySelector("[data-roster-draft-date]")?.value || "";
+  const actualIn = normalizedRosterInput(draftRow?.querySelector('[data-roster-draft-field="in"]'));
+  const actualOut = normalizedRosterInput(draftRow?.querySelector('[data-roster-draft-field="out"]'));
+  if (!date) {
+    setStatus("請先選擇 Actual Row 日期。", true);
+    draftRow?.querySelector("[data-roster-draft-date]")?.focus();
+    return;
+  }
+  if (actualIn === null || actualOut === null || (!actualIn && !actualOut)) {
+    setStatus("請輸入至少一個有效時間，例如 11:42 或 1142。", true);
+    return;
+  }
+  if (!state.ocr) state.ocr = createOcrAggregate([]);
+  const rows = ocrRows().slice();
+  const staffName = state.rosterActualDraft?.staff || state.selectedRosterStaff;
+  setOcrActualValuesInRows(rows, staffName, date, actualIn, actualOut, []);
+  replaceOcrRows(rows);
+  state.rosterActualDraft = null;
+  await refreshAfterRosterActualEdit(`已新增 ${staffName} ${formatScheduleDayOnly(date)} 的 Actual Row。`);
 }
 
 async function setOcrActualCells(edits) {
@@ -4492,8 +4565,8 @@ async function setOcrActualCells(edits) {
     state.ocr = createOcrAggregate([]);
   }
   const rows = ocrRows().slice();
-  normalizedEdits.forEach(({ staff, date, field, value }) => {
-    setOcrActualInRows(rows, staff, date, field, value);
+  normalizedEdits.forEach(({ staff, date, field, value, actualRowIds }) => {
+    setOcrActualInRows(rows, staff, date, field, value, actualRowIds || []);
   });
   replaceOcrRows(rows);
   const first = normalizedEdits[0];
@@ -4501,12 +4574,14 @@ async function setOcrActualCells(edits) {
   await refreshAfterRosterActualEdit(`已更新 ${first.staff} ${formatScheduleDayOnly(first.date)} ${suffix}的實際時間。`);
 }
 
-function setOcrActualInRows(rows, staffName, date, field, value) {
+function setOcrActualInRows(rows, staffName, date, field, value, actualRowIds = []) {
   if (!staffName || !date) return;
-  let target = rows.find((row) => ocrRowMatchesStaffDate(row, staffName, date));
+  let target = findOcrActualRow(rows, actualRowIds)
+    || rows.find((row) => ocrRowMatchesStaffDate(row, staffName, date));
   if (!target) {
     target = {
       name: staffName,
+      actual_row_id: createActualRowId(),
       date,
       in: "",
       out: "",
@@ -4523,10 +4598,42 @@ function setOcrActualInRows(rows, staffName, date, field, value) {
   target.all_times = [target.in, target.out].filter(Boolean).sort((left, right) => (timeMinutes(left) ?? 0) - (timeMinutes(right) ?? 0));
 }
 
-async function deleteRosterActualRows(staffName, date) {
+function setOcrActualValuesInRows(rows, staffName, date, actualIn, actualOut, actualRowIds = []) {
+  let targets = rows.filter((row) => actualRowIdsForRow(row).some((id) => actualRowIds.includes(id)));
+  if (!targets.length) {
+    const fallback = rows.find((row) => ocrRowMatchesStaffDate(row, staffName, date));
+    if (fallback) targets = [fallback];
+  }
+  if (!targets.length) {
+    const sourceFilename = staffLogsheetFile(staffName)?.name || "manual";
+    const target = {
+      actual_row_id: createActualRowId(),
+      name: staffName,
+      date,
+      source_filename: sourceFilename,
+      source_filenames: [sourceFilename],
+      warnings: ["人工新增 Actual Row"],
+    };
+    rows.push(target);
+    targets = [target];
+  }
+  targets.forEach((target) => {
+    target.in = actualIn || null;
+    target.out = actualOut || null;
+    target.name = target.name || staffName;
+    target.date = date;
+    target.all_times = [actualIn, actualOut]
+      .filter(Boolean)
+      .sort((left, right) => (timeMinutes(left) ?? 0) - (timeMinutes(right) ?? 0));
+  });
+}
+
+async function deleteRosterActualRowsById(staffName, date, actualRowIds = []) {
   const before = ocrRows();
   const aliases = comparisonOcrAliasesForStaffDate(staffName, date);
-  const after = before.filter((row) => !ocrRowMatchesStaffDate(row, staffName, date, aliases));
+  const after = actualRowIds.length
+    ? before.filter((row) => !actualRowIdsForRow(row).some((id) => actualRowIds.includes(id)))
+    : before.filter((row) => !ocrRowMatchesStaffDate(row, staffName, date, aliases));
   if (after.length === before.length) {
     setStatus("找不到可刪除的 Actual Row。", true);
     return;
@@ -4544,10 +4651,61 @@ async function refreshAfterRosterActualEdit(message) {
 
 function replaceOcrRows(rows) {
   if (!state.ocr) return;
-  state.ocr.daily_rows = rows;
+  state.ocr.daily_rows = ensureActualRowIds(rows);
   if (state.ocr.structured && typeof state.ocr.structured === "object") {
-    state.ocr.structured.daily_rows = rows;
+    state.ocr.structured.daily_rows = state.ocr.daily_rows;
   }
+}
+
+function createActualRowId() {
+  if (globalThis.crypto?.randomUUID) return `actual-${globalThis.crypto.randomUUID()}`;
+  actualRowSequence += 1;
+  return `actual-${Date.now()}-${actualRowSequence}`;
+}
+
+function ensureActualRowId(row) {
+  if (!row || typeof row !== "object") return "";
+  const existing = String(row.actual_row_id || "").trim();
+  if (existing) return existing;
+  const inherited = (row.actual_row_ids || []).map((value) => String(value || "").trim()).find(Boolean);
+  row.actual_row_id = inherited || createActualRowId();
+  return row.actual_row_id;
+}
+
+function ensureActualRowIds(rows) {
+  return (rows || []).map((row) => {
+    const actualRowId = ensureActualRowId(row);
+    row.actual_row_ids = [...new Set([
+      actualRowId,
+      ...(row.actual_row_ids || []),
+    ].map((value) => String(value || "").trim()).filter(Boolean))];
+    return row;
+  });
+}
+
+function actualRowIdsForRow(row) {
+  if (!row) return [];
+  const actualRowId = ensureActualRowId(row);
+  return [...new Set([actualRowId, ...(row.actual_row_ids || [])].filter(Boolean))];
+}
+
+function actualRowIdsFromElement(element) {
+  return String(element?.dataset.actualRowIds || "")
+    .split("|")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+function comparisonActualRowIds(row) {
+  return [...new Set([
+    row?.actual_row_id,
+    ...(row?.actual_row_ids || []),
+  ].map((value) => String(value || "").trim()).filter(Boolean))];
+}
+
+function findOcrActualRow(rows, actualRowIds) {
+  if (!actualRowIds?.length) return null;
+  return rows.find((row) => actualRowIdsForRow(row).some((id) => actualRowIds.includes(id))) || null;
 }
 
 function comparisonOcrAliasesForStaffDate(staffName, date) {
@@ -5029,8 +5187,18 @@ function renderOcrTable(rows) {
 
 function ocrRows() {
   if (!state.ocr) return [];
-  if (Array.isArray(state.ocr.daily_rows)) return state.ocr.daily_rows;
-  if (Array.isArray(state.ocr.structured?.daily_rows)) return state.ocr.structured.daily_rows;
+  if (Array.isArray(state.ocr.daily_rows)) {
+    state.ocr.daily_rows = ensureActualRowIds(state.ocr.daily_rows);
+    if (state.ocr.structured && typeof state.ocr.structured === "object") {
+      state.ocr.structured.daily_rows = state.ocr.daily_rows;
+    }
+    return state.ocr.daily_rows;
+  }
+  if (Array.isArray(state.ocr.structured?.daily_rows)) {
+    state.ocr.structured.daily_rows = ensureActualRowIds(state.ocr.structured.daily_rows);
+    state.ocr.daily_rows = state.ocr.structured.daily_rows;
+    return state.ocr.structured.daily_rows;
+  }
   return [];
 }
 
@@ -5104,6 +5272,8 @@ function mergeOcrDailyRows(rows) {
     const key = name ? `${name}||${date}` : date ? `${sourcePart}||${date}` : fallbackKey;
     if (!merged.has(key)) {
       merged.set(key, {
+        actual_row_id: ensureActualRowId(row),
+        actual_row_ids: [],
         name: name || null,
         date: date || null,
         in: null,
@@ -5129,6 +5299,8 @@ function mergeOcrDailyRows(rows) {
       });
     }
     const target = merged.get(key);
+    appendUnique(target.actual_row_ids, actualRowIdsForRow(row));
+    if (!target.actual_row_id && target.actual_row_ids.length) target.actual_row_id = target.actual_row_ids[0];
     target.name = target.name || name || null;
     target.ocr_name = target.ocr_name || row.ocr_name || "";
     target.source_staff_label = target.source_staff_label || row.source_staff_label || "";

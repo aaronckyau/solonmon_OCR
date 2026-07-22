@@ -831,6 +831,11 @@ def merge_logsheet_daily_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]
                 merged[key]["name_identity_status"] = row["name_identity_status"]
             order.append(key)
         target = merged[key]
+        actual_row_ids = _present_list(row.get("actual_row_ids") or [row.get("actual_row_id")])
+        if actual_row_ids:
+            _append_unique(target.setdefault("actual_row_ids", []), actual_row_ids)
+            if not target.get("actual_row_id"):
+                target["actual_row_id"] = target["actual_row_ids"][0]
         target["name"] = target["name"] or name
         if ocr_name and not target.get("ocr_name"):
             target["ocr_name"] = ocr_name
